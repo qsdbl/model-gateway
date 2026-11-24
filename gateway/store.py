@@ -936,6 +936,19 @@ class Store:
             rows = self._conn.execute("SELECT * FROM renew_state").fetchall()
         return [dict(r) for r in rows]
 
+    def clear_renew_state(self, account_label: str, platform: str) -> None:
+        """人工重新扫码后清掉续期失败记录，让账号行的红色告警立刻消失。
+
+        口径与 renew_result 一致：production 写的是 "WorkBuddy"/"Qoder"，
+        测试/部分调用写小写——这里用 lower() 比对，两种都清掉。
+        """
+        with self._tx() as c:
+            c.execute(
+                "DELETE FROM renew_state WHERE lower(account_label)=lower(?) "
+                "AND lower(platform)=lower(?)",
+                (account_label, platform),
+            )
+
     def list_schedule_log(self, limit: int = 60) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(

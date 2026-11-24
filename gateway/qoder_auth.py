@@ -496,6 +496,9 @@ class QoderAuthSession:
                 store.update_balance(
                     label, float(balance), "credits_qoder", time.time()
                 )
+            # R2.38：重新授权成功 = 人工恢复登录态，清掉续期失败告警，
+            # 账号行的红色「重新授权」按钮随即消失。
+            store.clear_renew_state(label, "qoder")
         except Exception:
             pass
 

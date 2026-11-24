@@ -236,6 +236,19 @@ def _accounts_rich() -> list[dict]:
 
     usage = store.usage_by_account(30)
     db = {r["label"]: r for r in store.list_accounts()}
+    # R2.38：凭据续期失败状态（renew_state）合并进账号行。
+    # production 写 platform="WorkBuddy"/"Qoder"，测试写小写——按 lower 归一建索引。
+    renew = {}
+    try:
+        for st in store.renew_states():
+            key = (str(st.get("account_label") or "").lower(),
+                   str(st.get("platform") or "").lower())
+            renew[key] = {
+                "fail_streak": int(st.get("fail_streak") or 0),
+                "last_fail_at": st.get("last_fail_at"),
+            }
+    except Exception:
+        pass
     accounts = known_accounts()
     active = modelstate.active_account()
     rows: list[dict] = []
@@ -416,8 +429,23 @@ def _accounts_rich() -> list[dict]:
     rows.sort(key=lambda r: r["balance"] if r["balance"] is not None else -1, reverse=True)
     # R1.9：每个账号挂一个 in_routing，前端据此标注「余额为 0 · 不参与调度」，
     # 与平台汇总的 routing 计数、真实候选池三处口径一致。
+    # R2.38：凭据续期失败 / 已过期 → 账号行显示红色「重新授权」按钮。
+    from . import signin as _signin
     for r in rows:
         r["in_routing"] = _in_routing(r)
+        st = renew.get((str(r["label"]).lower(), str(r["platform"]).lower()), {})
+        streak = int(st.get("fail_streak") or 0)
+        # credential.expires_at 是秒时间戳；days_left 与后台展开区口径一致
+        exp = (r.get("credential") or {}).get("expires_at")
+        days = _signin._days_left(exp) if exp else None
+        r["renew"] = {
+            "fail_streak": streak,
+            "last_fail_at": st.get("last_fail_at"),
+            "days_left": days,
+            # 阈值 2 与 background.RENEW_FAIL_ALERT_STREAK 一致；
+            # days_left<=0 表示凭据文件里的时间戳已过期。
+            "needs_reauth": streak >= 2 or (days is not None and days <= 0),
+        }
     return rows
 
 
@@ -647,6 +675,9 @@ async def api_import_account(request: Request) -> dict:
         store.update_balance(
             result["label"], result["balance"], "credits_workbuddy", time.time()
         )
+    # 重新扫码 = 人工恢复了登录态，清掉之前的续期失败告警；
+    # 否则账号行的红色「重新授权」按钮会一直挂着，明明已经修好了。
+    store.clear_renew_state(result["label"], "workbuddy")
     return {"ok": True, "account": result}
 
 

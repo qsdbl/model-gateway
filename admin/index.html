@@ -212,7 +212,10 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
   white-space:nowrap}
 .qbtn:active{opacity:.7}
 .qbtn.pri{background:var(--accent);color:#fff;border-color:transparent}
-.qbtn[disabled]{opacity:.45;cursor:default}
+/* R2.38：凭据续期失败/过期的红色「重新授权」按钮 + 行内告警文字。
+   依据 Apple HIG 语义色：告警用系统红，正文对比度 ≥4.5:1（深色模式用亮红）。 */
+.qbtn.danger{background:var(--err);color:#fff;border-color:transparent}
+.reauth-hint{color:var(--err);font-weight:600;margin-right:6px}
 
 /* 指引 / 代码块 */
 .step{display:flex;gap:12px;padding:14px}
@@ -2004,15 +2007,27 @@ function accountRow(x){
       ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
       : (x.auth_status==="ok"?"余额已读取":"状态未知"));
   if(routeNote) sub = sub ? `${sub} · ${routeNote}` : routeNote;
+  // R2.38：续期失败 / 凭据已过期 → 醒目提示 + 行尾红色「重新授权」按钮。
+  // 数据由后端 /accounts 的 x.renew.needs_reauth 给出（阈值与告警邮件一致）。
+  const rn=x.renew||{}, needsReauth=!!rn.needs_reauth;
+  const reauthHint = needsReauth
+    ? (rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权" : "凭据已过期 · 需重新授权")
+    : "";
   const right = x.balance!=null
     ? `<span class="bal">${creditText(x.balance)}<i>积分</i></span>`
     : pill("余额未知","warn");
   // Qoder 行的授权入口：未授权时是主操作，已授权时变成次要的「检查」。
-  const qbtn = isQ
+  let qbtn = isQ
     ? (q.authorized
         ? `<button type="button" class="qbtn" data-qcheck="${esc(x.label)}">检查</button>`
         : `<button type="button" class="qbtn pri" data-qauth="${esc(x.label)}">授权</button>`)
     : "";
+  // 需要重新授权时，红色按钮覆盖/追加到行尾（Qoder 已有授权按钮就不再重复，
+  // 直接把它升级成红色主操作；WorkBuddy 则新增一个）。
+  if(needsReauth){
+    qbtn = `<button type="button" class="qbtn danger" data-reauth="${esc(x.label)}" `
+      + `title="${esc(reauthHint)}">重新授权</button>`;
+  }
   const groups=(c.groups||[]).filter(g=>g.capacity>0||g.remain>0).map(g=>
     `<div class="kv"><span>${esc(g.label)}</span><b>${creditText(g.remain)} / ${creditText(g.capacity)}</b></div>`
   ).join("");
@@ -2052,7 +2067,7 @@ function accountRow(x){
   return `<div class="row tap${x.active?" active":""}" data-acc="${esc(x.label)}">
     <div class="rmain">
       <div class="rtitle">${platBadge(x.platform,x.platform_label||x.platform)}${esc(x.disp||dispLabel(x.label))}</div>
-      <div class="rsub">${esc(sub)}</div>
+      <div class="rsub">${needsReauth?`<span class="reauth-hint">${esc(reauthHint)}</span>`:""}${esc(sub)}</div>
     </div>
     <div class="rright">${right}${qbtn}${x.active?'<span class="tick">✓</span>':""}
       <span class="cv${open?" open":""}">▶</span></div>
@@ -2120,7 +2135,7 @@ function renderAccounts(d){
 function bindAccountActions(){
   document.querySelectorAll("[data-acc]").forEach(el=>el.addEventListener("click",e=>{
     // 行内的操作按钮自己处理，不要顺带把行展开/折叠
-    if(e.target.closest("[data-switch],[data-qauth],[data-qcheck]")) return;
+    if(e.target.closest("[data-switch],[data-qauth],[data-qcheck],[data-reauth]")) return;
     const label=el.dataset.acc;
     if(ACC.open.has(label)) ACC.open.delete(label); else ACC.open.add(label);
     renderAccounts({items:ACC.items});
@@ -2150,6 +2165,24 @@ function bindAccountActions(){
     e.stopPropagation();
     qoderAuthDialog(btn.dataset.qauth);
   }));
+  /* R2.38：凭据续期失败/过期的红色「重新授权」按钮。
+     WorkBuddy → 复用扫码弹窗重新登录（同 uid 覆盖凭据 + 清告警）；
+     Qoder → 复用设备码 reauth 流程（核对 uid 一致 + 覆盖凭据）。 */
+  document.querySelectorAll("[data-reauth]").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const label=btn.dataset.reauth;
+    const item=ACC.items.find(i=>i.label===label)||{};
+    const plat=item.platform||"workbuddy";
+    const ok=await dialog({
+      title:"重新授权",
+      rows:[["账号",label],["原因",(item.renew&&item.renew.fail_streak>=2)?"凭据续期失败":"凭据已过期"],
+            ["操作","重新扫码登录同一个账号，更新登录状态"]],
+      confirmText:"去重新授权",
+    });
+    if(!ok) return;
+    if(plat==="qoder") qoderAuthDialog(label);
+    else importDialog({reauth:true});
+  }));
   document.querySelectorAll("[data-qcheck]").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation();
     const label=btn.dataset.qcheck;
@@ -2172,12 +2205,15 @@ function bindAccountActions(){
 /* 添加账号弹窗：默认「扫码登录」，第二个 tab 才是粘贴 .info。
    用户原话：「为啥我点击添加按钮只有一个输入框」——扫码本来就是官方唯一入口
    （CLI 登录链接 + 轮询拿凭据），只是之前没做成页面。 */
-function importDialog(){
+function importDialog(opts){
   const ov=document.getElementById("overlay");
   const box=document.getElementById("alert");
+  // R2.38：账号行「重新授权」入口复用本弹窗——重新扫同一个号即可刷新登录态。
+  const reauth=!!(opts&&opts.reauth);
   box.classList.add("wide");
   box.innerHTML=`
-    <div class="head"><h2>添加账号</h2></div>
+    <div class="head"><h2>${reauth?"重新授权":"添加账号"}</h2>
+      ${reauth?'<div class="msg">请重新扫码登录<b>同一个账号</b>，完成后会更新它的登录状态并清除告警。</div>':""}</div>
     <div class="plattabs" role="tablist" id="platTabs">
       <button role="tab" aria-selected="true" data-plat="wb">WorkBuddy</button>
       <button role="tab" aria-selected="false" data-plat="qoder">Qoder</button>
@@ -2419,7 +2455,11 @@ function importDialog(){
         await kill();
         stopped=true;
         ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
-        toast("已添加："+(r.account&&r.account.label||"账号"));
+        // R2.38：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
+        const acc=r.account||{};
+        toast(acc.replaced
+          ? `该账号已存在，已更新登录状态：${acc.label||"账号"}`
+          : `已添加：${acc.label||"账号"}`);
         await refreshChip();
         load("accounts");
       }catch(e){
@@ -2482,7 +2522,11 @@ function importDialog(){
       const r=await postJSON("accounts/import",{content});
       stopped=true; clearInterval(timer);
       ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
-      toast("已添加："+(r.account&&r.account.label||"账号"));
+      // R2.38：区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
+      const acc=r.account||{};
+      toast(acc.replaced
+        ? `该账号已存在，已更新登录状态：${acc.label||"账号"}`
+        : `已添加：${acc.label||"账号"}`);
       await refreshChip();
       load("accounts");
     }catch(e){

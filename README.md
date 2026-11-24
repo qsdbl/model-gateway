@@ -51,10 +51,10 @@
 cd model-gateway
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi uvicorn httpx pydantic
+pip install -r requirements.txt
 ```
 
-（测试另需 `pip install pytest`。）
+（`requirements.txt` 含运行依赖 `fastapi / uvicorn / segno`——其中 `segno` 用于扫码登录，漏装会导致扫码报错。测试另需 `pip install pytest httpx`。）
 
 ### 3. 配置
 

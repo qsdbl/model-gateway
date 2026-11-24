@@ -1,0 +1,12 @@
+# 运行依赖（Python 3.10+）
+# 安装：pip install -r requirements.txt
+fastapi>=0.100
+uvicorn[standard]>=0.20        # ASGI 服务器，用于 uvicorn gateway.app:app 启动
+segno>=1.5                     # 扫码登录生成二维码（gateway/qrlogin.py）；漏装会导致扫码报错
+
+# 说明：本项目刻意只用标准库做存储（sqlite3）、发信（smtplib）、二维码之外的绝大部分功能。
+# 上游 CLI（codebuddy / qoderclicn）不在此处——它们不是 Python 依赖，按 README 单独安装。
+
+# ---- 测试依赖（可选，仅跑 tests/ 时需要）----
+# pip install pytest httpx
+# httpx 供 fastapi.testclient 用；pytest 跑测试。

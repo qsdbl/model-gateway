@@ -134,6 +134,12 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .ghead .ghelp{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
   border:0;background:transparent;color:var(--label-3);cursor:pointer;padding:0;vertical-align:middle}
 .ghead .ghelp:hover{color:var(--accent)}
+/* 平台区块展开/收起：与 ghelp 同款图标按钮；箭头方向只交给 CSS，
+   JS 只切换 aria-expanded，避免字符与旋转两套来源互相抵消（R2.37 教训）。 */
+.ghead .gcaret{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+  border:0;background:transparent;color:var(--label-3);cursor:pointer;padding:0;transition:transform .15s}
+.ghead .gcaret:hover{color:var(--accent)}
+.ghead .gcaret[aria-expanded="true"]{transform:rotate(90deg)}
 .card{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
 .card+.card{margin-top:10px}
 /* R1：长列表固定高度、内部滚动（用户反馈列表太长整页滚动很乱）。
@@ -308,6 +314,11 @@ code{font-family:inherit}
 .tgl{font-size:11px;font-weight:600;padding:4px 9px;border-radius:8px;border:1px solid var(--separator);
   background:transparent;color:var(--label-2);cursor:pointer;white-space:nowrap}
 .tgl[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 「立即探测」这类操作按钮：与同区域的下拉/开关同高同字号，不用整宽 44px 主按钮。 */
+.srow .probe-btn{font:inherit;font-size:13px;line-height:18px;padding:5px 12px;border-radius:8px;
+  border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;white-space:nowrap}
+.srow .probe-btn:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.srow .probe-btn:disabled{opacity:.5;cursor:default}
 /* 下拉选择（手动指定模型）：与后台其它控件同一套边框/圆角/字号 */
 .srow select{font-size:13px;line-height:18px;padding:5px 8px;border-radius:8px;
   border:1px solid var(--separator);background:var(--surface-2,var(--surface));color:var(--label-1);
@@ -1455,7 +1466,7 @@ async function switchModel(x){
 }
 
 /* ==================== 账号 ==================== */
-const ACC={open:new Set(),items:[],platform:"all",platforms:[]};
+const ACC={open:new Set(),items:[],platform:"all",platforms:[],platOpen:false};
 
 const creditText=v=>{
   if(v==null) return "未知";
@@ -2144,23 +2155,24 @@ function renderAccounts(d){
   });
   let h="";
   if(plats.length){
-    h+='<div class="group"><div class="ghead">平台</div><div class="card">';
-    for(const p of plats){
-      h+=`<div class="row"><div class="rmain"><div class="rtitle">
+    // 平台区块默认收起：只在需要核对各平台账号分布时展开，避免占掉首屏。
+    h+=`<div class="group"><div class="ghead">平台
+      <button type="button" class="gcaret" id="platCaret" aria-expanded="${ACC.platOpen?"true":"false"}" aria-label="${ACC.platOpen?"收起":"展开"}平台">${SVG_CHEVRON_R}</button>
+      </div><div class="card" id="platCard"${ACC.platOpen?"":" hidden"}>`
+      + plats.map(p=>`<div class="row"><div class="rmain"><div class="rtitle">
         ${platBadge(p.platform,p.label)}${p.count} 个账号</div>
         <div class="rsub">${p.routing>0
           ? `${p.routing} 个可参与调度${p.active?" · 有当前账号":""}`
           : "未参与调度（需要先授权）"}</div></div>
-        <div class="rright">${p.routing>0?pill(p.routing+" 个可用","ok"):pill("未参与","plain")}</div></div>`;
-    }
-    h+='</div></div>';
+        <div class="rright">${p.routing>0?pill(p.routing+" 个可用","ok"):pill("未参与","plain")}</div></div>`).join("")
+      + '</div></div>';
   }
   // R1.1：全账号汇总图表（low/high 叠加 + 维度/图形/模式切换）
   // R1.6：汇总卡片内部加 padding——之前内容（日期/维度按钮、图表、模型分布）
   // 紧贴 card 圆角边框，手机上像贴屏幕。单账号展开区有自己的 padding，不受影响。
   h+='<div class="group"><div class="ghead">用量汇总</div>'
     +`<div class="card uh-summary-card"><div id="uh-${sid("__all__")}"><div class="uload">加载中…</div></div></div></div>`;
-  h+='<div class="group"><div class="ghead">账号 · 按剩余积分排序</div>';
+  h+='<div class="group"><div class="ghead">账号</div>';
   h+='<div class="card">'+ACC.items.map(accountRow).join("")+'</div>';
   h+=addAccountCard();
   h+='<div class="note">今日消耗含官方客户端；24 小时仅本网关；余额不跨平台相加。</div>';
@@ -2175,6 +2187,15 @@ function renderAccounts(d){
 }
 
 function bindAccountActions(){
+  // 平台区块展开/收起：只切 DOM（hidden + aria），不重绘整页，避免跳动。
+  const pc=document.getElementById("platCaret");
+  if(pc) pc.addEventListener("click",()=>{
+    ACC.platOpen=!ACC.platOpen;
+    pc.setAttribute("aria-expanded",ACC.platOpen?"true":"false");
+    pc.setAttribute("aria-label",ACC.platOpen?"收起平台":"展开平台");
+    const card=document.getElementById("platCard");
+    if(card) card.hidden=!ACC.platOpen;
+  });
   document.querySelectorAll("[data-acc]").forEach(el=>el.addEventListener("click",e=>{
     // 行内的操作按钮自己处理，不要顺带把行展开/折叠
     if(e.target.closest("[data-switch],[data-qauth],[data-qcheck],[data-reauth]")) return;
@@ -3562,13 +3583,13 @@ function renderSchedule(d){
         <option value="all"${d.probe.mode==="all"?" selected":""}>全部模型定期重测（旧行为）</option>
       </select> ${schTgl("probe_enabled",d.probe.enabled,"warn")}</div></div>
     <div class="srow"><div class="sk">免费链路探测<small>用 hy4flash-free 探一次上游是否通，不花积分</small></div>
-      <div class="sv"><button id="healthProbeBtn" class="btn" type="button">立即探测</button></div></div>
+      <div class="sv"><button id="healthProbeBtn" class="probe-btn" type="button">立即探测</button></div></div>
   </div></div>`;
 
   /* --- 模型顺序（可拖拽 + 可停用）---
      R2.6：low 区拖拽只改列表显示顺序（ui_low_order，纯 UI，不动免费优先调度）；
      high 区是强模型清单（profiles.high.model_order），标出每个模型在 high 里的优先级。 */
-  h+=`<div class="group"><div class="ghead">模型顺序 · low 模式 · 拖动调整 · 可停用</div>
+  h+=`<div class="group"><div class="ghead">模型顺序 · low 模式</div>
     <div class="card"><div class="orderlist${SCH.expand.low?" scroll-list":""}" id="orderlist">`;
   if(!lowModels.length){
     h+=`<div class="empty">没有可用的模型目录</div>`;
@@ -3610,9 +3631,12 @@ function renderSchedule(d){
   }else{
     highModels.forEach((m,i)=>{
       const rep=repId(m,hpSet);
-      const inHigh=rankOf(m,highRank)>=0;
-      const rank=inHigh?rankOf(m,highRank)+1:0;
       const nc=callsOf(rep,"high");
+      // R2.39：合并行的启用态只由「任一 variant 在 model_order 里」决定，与平台开关无关。
+      // 两平台都有的模型，取消其中一个平台后仍能通过另一个平台使用，绝不能打删除线。
+      const r=rankOf(m,highRank);
+      const inHigh=r>=0;
+      const rank=inHigh?r+1:0;
       // 平台角标：合并行列出它存在于哪些平台；未启用平台的角标淡化。
       const badges=(m.platforms||[m.platform||"workbuddy"]).map(p=>
         `<span class="ptag${hpSet.has(String(p).toLowerCase())?"":" dim"}" data-plat="${esc(String(p).toLowerCase())}" title="${esc(PLAT_FULL[p]||p)}">${esc(PLAT_SHORT[p]||p)}</span>`).join("");

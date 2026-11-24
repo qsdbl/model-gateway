@@ -130,6 +130,10 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .group{margin-bottom:20px}
 .ghead{font-size:12px;line-height:16px;color:var(--label-3);font-weight:600;
   text-transform:uppercase;letter-spacing:.5px;padding:0 4px 6px;display:flex;align-items:center;gap:6px}
+/* 分区标题后的说明问号：与标题同权重，点击弹统一风格说明 */
+.ghead .ghelp{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+  border:0;background:transparent;color:var(--label-3);cursor:pointer;padding:0;vertical-align:middle}
+.ghead .ghelp:hover{color:var(--accent)}
 .card{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
 .card+.card{margin-top:10px}
 /* R1：长列表固定高度、内部滚动（用户反馈列表太长整页滚动很乱）。
@@ -178,7 +182,7 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .pill.plain{color:var(--label-2);background:var(--fill)}
 /* R2.6：真免费模型用暖橙 FREE 角标，和同名付费模型一眼可分。
    付费方不额外加角标（避免列表噪音），靠「有/无 FREE」区分即可。 */
-.pill.free{color:#B45309;background:rgba(245,158,11,.16);margin-right:5px}
+.pill.free{color:#B45309;background:rgba(245,158,11,.16)}
 .dotst{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
 .dotst.ok{background:var(--ok)} .dotst.err{background:var(--err)} .dotst.warn{background:var(--warn)}
 
@@ -194,6 +198,8 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
   white-space:nowrap;flex:0 0 auto}
 .ptag[data-plat="qoder"]{background:#8944AB;color:#fff}
 .ptag[data-plat="mock"],.ptag[data-plat="unknown"]{background:var(--fill);color:var(--label-2)}
+.ptag.dim{opacity:.32}   /* 合并行里未启用平台的角标淡化，一眼看出该平台没参与 */
+.orderrow.hidden-plat{display:none}   /* 只有未启用平台的模型，勾选平台切换后整行隐藏 */
 
 /* Qoder 账号行内的授权按钮（P44）。
    规格来源：Material Design 3 — Buttons / text button
@@ -279,7 +285,12 @@ code{font-family:inherit}
 .orderrow.off .omodel{color:var(--label-3);text-decoration:line-through}
 .handle{flex:0 0 auto;width:20px;text-align:center;color:var(--label-3);cursor:grab;font-size:14px;
   line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}
-.orderrow .omodel{flex:1 1 auto;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 角标（平台/FREE/high#N/次数）之间留固定间距，杜绝贴在一起；
+   模型名单独一层 .mname 承载省略号，flex 布局下才不会被角标挤碎。 */
+.orderrow .omodel{flex:1 1 auto;min-width:0;font-size:13px;display:flex;align-items:center;
+  gap:5px;flex-wrap:wrap;white-space:nowrap}
+.orderrow .omodel .mname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.orderrow .omodel>.pill,.orderrow .omodel>.ptag{flex:0 0 auto}
 /* 价格信息（P41）：要能收缩 + 省略，绝不能被挤出容器。
    窄屏时（见下方媒体查询）整块换到第二行显示，不做横向滚动。 */
 .orderrow .ometa{flex:0 1 auto;min-width:0;max-width:46%;font-size:11px;color:var(--label-3);
@@ -423,15 +434,17 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
    内部分隔线一致；去掉 hctl 的外边距。 */
 .udtop .hctl{margin-top:0}
 .udtop .hseg button{height:28px;font-size:12px;line-height:16px;padding:0 10px}
-/* 自定义日历弹层（不用浏览器默认 input[type=date]，与后台控件同风格） */
-.cal{width:min(302px,100%);max-width:100%;margin:0 auto}
-.cal .calhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
+/* 自定义日历弹层（不用浏览器默认 input[type=date]，与后台控件同风格）。
+   弹窗宽度贴合日历本身，四周用同一 padding，避免左右比上下空一大截。 */
+.alert.cal-dialog{width:min(320px,100%)}
+.cal{width:100%;max-width:100%;margin:0 auto}
+.cal .calhead{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 8px}
 .cal .caltitle{font-size:15px;font-weight:600;color:var(--label)}
 .cal .calnav{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
   border:1px solid var(--separator);border-radius:7px;background:var(--surface-2);
   color:var(--label-2);cursor:pointer}
 .cal .calnav:disabled{opacity:.35;cursor:not-allowed}
-.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:4px 12px 12px}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:4px 16px 8px}
 .calgrid .cw{font-size:11px;line-height:16px;color:var(--label-3);text-align:center;padding:4px 0}
 .calgrid .cd{position:relative;display:flex;align-items:center;justify-content:center;
   height:34px;border:0;border-radius:8px;background:transparent;color:var(--label);
@@ -442,7 +455,7 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .calgrid .cd.today:not([aria-pressed="true"])::after{content:"";position:absolute;bottom:4px;
   width:3px;height:3px;border-radius:50%;background:var(--accent)}
 .calgrid .cd.empty{visibility:hidden}
-.calfoot{padding:0 16px 14px;font-size:11px;line-height:16px;color:var(--label-3);text-align:center}
+.calfoot{padding:6px 16px 16px;font-size:11px;line-height:16px;color:var(--label-3);text-align:center}
 /* P48 图表控件：segmented control，Apple HIG 11/13 caption，选中态用强调色 */
 .hctl{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .hseg{display:inline-flex;border:1px solid var(--separator);border-radius:7px;overflow:hidden}
@@ -807,6 +820,12 @@ const SVG_CHEVRON_L='<svg viewBox="0 0 16 16" width="13" height="13" fill="none"
 const SVG_CHEVRON_R='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
   +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   +'<path d="M6 3.5 10.5 8 6 12.5"/></svg>';
+/* 说明问号（Apple HIG Icons：单色 currentColor、统一线宽 1.8、16px 网格）。
+   放在分区标题后，点击弹统一风格说明，替代原先贴在列表底部的两行文字。 */
+const SVG_HELP='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
+  +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  +'<circle cx="8" cy="8" r="6.2"/><path d="M6.2 6.2a1.9 1.9 0 1 1 2.6 1.77c-.6.28-.8.65-.8 1.28"/>'
+  +'<circle cx="8" cy="11.7" r=".7" fill="currentColor" stroke="none"/></svg>';
 
 /* 单位与钱的写法统一：credits_workbuddy → 积分，避免 "1265.65000006 credits_workbuddy" */
 const UNIT={credits_workbuddy:"积分",credits_wb:"积分",credits_qoder:"积分",mock_credits:"积分"};
@@ -967,6 +986,21 @@ function dialog({title,message,rows=[],warn="",confirmText="好",cancelText="取
     const close=val=>{ ov.classList.remove("show"); box.innerHTML=""; resolve(val); };
     box.querySelector('[data-act="cancel"]').onclick=()=>close(false);
     box.querySelector('[data-act="ok"]').onclick=()=>close(true);
+    ov.classList.add("show");
+  });
+}
+
+/* 只读说明弹窗：只给「知道了」一个按钮，样式与 dialog 完全一致。
+   用于分区标题问号——把「一看就知道」之外的补充说明收进弹层，不占列表底部空间。 */
+function infoDialog({title,message="",lines=[]}){
+  return new Promise(resolve=>{
+    const ov=document.getElementById("overlay"), box=document.getElementById("alert");
+    box.innerHTML=`
+      <div class="head"><h2>${esc(title)}</h2>${message?`<div class="msg">${esc(message)}</div>`:""}</div>
+      ${lines.length?`<div class="rows">${lines.map(x=>`<div class="arow" style="display:block;text-align:left">${esc(x)}</div>`).join("")}</div>`:""}
+      <div class="acts"><button type="button" data-act="ok" class="primary">知道了</button></div>`;
+    const close=()=>{ ov.classList.remove("show"); box.innerHTML=""; resolve(true); };
+    box.querySelector('[data-act="ok"]').onclick=close;
     ov.classList.add("show");
   });
 }
@@ -1282,9 +1316,9 @@ function freeBarHTML(f){
     else timeText="按最近强度，约 "+est.minutes_left+" 分钟后可能进入付费"
       +(est.range?"（区间 "+est.range[0]+"–"+est.range[1]+" 分钟）":"");
   }else{
-    // 没有预测数据时不再显示「样本不足，暂不 Prediction」这类占位噪音，
-    // 留空由调用方按 timeText 为空隐藏整行。
-    timeText=est.reason||"";
+    // 没有预测数据时整行不显示：后端 reason（如「样本不足，暂不预测」）
+    // 属于内部状态说明，不是给用户看的文案，绝不回显到界面上。
+    timeText="";
   }
   const reset=last.reset_pending?" · 上次 429 将于 "+hhmm(last.reset_at)+" 重置":"";
   // 真免费模型（目录 pricing=free，无论多长都扣 0）
@@ -1540,7 +1574,7 @@ function datePicker(current){
     const today=todayKey(), min=shiftKey(today,-90);
     let sel=current>today?today:current, view=new Date(parseKey(sel).getFullYear(),parseKey(sel).getMonth(),1);
     const dow=["日","一","二","三","四","五","六"];
-    const close=val=>{ ov.classList.remove("show"); ov.onclick=null; box.innerHTML=""; box.classList.remove("wide"); resolve(val); };
+    const close=val=>{ ov.classList.remove("show"); ov.onclick=null; box.innerHTML=""; box.classList.remove("cal-dialog"); resolve(val); };
     function paint(){
       const y=view.getFullYear(), m=view.getMonth();
       const first=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate();
@@ -1559,14 +1593,14 @@ function datePicker(current){
           <span class="caltitle">${y}年${m+1}月</span>
           <button type="button" class="calnav" data-mon="1" aria-label="下个月" ${atMax?"disabled":""}>${SVG_CHEVRON_R}</button>
         </div><div class="calgrid">${g}</div>
-        <div class="calfoot">可选范围：最近 90 天 · 点日期即选中</div></div>`;
+        <div class="calfoot">可选范围：最近 90 天</div></div>`;
       box.querySelectorAll("[data-mon]").forEach(b=>b.onclick=()=>{
         view.setMonth(view.getMonth()+(+b.dataset.mon)); paint();
       });
       box.querySelectorAll("[data-pick-day]").forEach(b=>b.onclick=()=>close(b.dataset.pickDay));
     }
     paint();
-    box.classList.add("wide");
+    box.classList.add("cal-dialog");
     ov.classList.add("show");
     ov.onclick=e=>{ if(e.target===ov) close(null); };
   });
@@ -2124,7 +2158,7 @@ function renderAccounts(d){
   // R1.1：全账号汇总图表（low/high 叠加 + 维度/图形/模式切换）
   // R1.6：汇总卡片内部加 padding——之前内容（日期/维度按钮、图表、模型分布）
   // 紧贴 card 圆角边框，手机上像贴屏幕。单账号展开区有自己的 padding，不受影响。
-  h+='<div class="group"><div class="ghead">全部账号 · 用量汇总</div>'
+  h+='<div class="group"><div class="ghead">用量汇总</div>'
     +`<div class="card uh-summary-card"><div id="uh-${sid("__all__")}"><div class="uload">加载中…</div></div></div></div>`;
   h+='<div class="group"><div class="ghead">账号 · 按剩余积分排序</div>';
   h+='<div class="card">'+ACC.items.map(accountRow).join("")+'</div>';
@@ -3383,11 +3417,41 @@ function renderSchedule(d){
   // R1 Q3：笼统别名（auto/default/快速…）不进候选池，页面也不展示。
   // 用户要的是「只留真正的模型名」，所以这里连模型列表都过滤掉。
   const visModels=models.filter(m=>!hidden.has(String(m.model||"").toLowerCase())&&!hidden.has(String(m.model_name||"").toLowerCase()));
+  // R2.38：同一模型在两个平台各有一条（如 WB 的 glm-5.3-flash 与 Qoder 的
+  // GLM-5.3-Flash，显示名相同、id 仅大小写不同），列表里不该列两遍。
+  // 按小写 model 名合并成一行，平台角标并列展示；variants 保留各平台原始 id，
+  // 供启用/停用/排序时写回配置（配置里仍是原始 model id 数组）。
+  function mergeByModel(list){
+    const map=new Map();
+    for(const m of list){
+      const k=String(m.model||"").toLowerCase();
+      const key=k||("__raw_"+map.size);
+      if(!map.has(key)) map.set(key,[]);
+      map.get(key).push(m);
+    }
+    return [...map.entries()].map(([key,variants])=>{
+      const plats=[...new Set(variants.map(x=>String(x.platform||"workbuddy").toLowerCase()))];
+      const primary=variants.find(x=>x.always_free)||variants[0];
+      return {...primary, mergeKey:key, platforms:plats, variants};
+    });
+  }
+  const mergedModels=mergeByModel(visModels);
+  // high 平台开关：d.high_enabled_platforms 为空 = 不过滤 = 两个平台都算启用。
+  const ALL_PLATS=["workbuddy","qoder"];
+  const rawHp=(d.high_enabled_platforms||[]).map(x=>String(x).toLowerCase());
+  const hpSet=new Set(rawHp.length?rawHp:ALL_PLATS);
+  // 合并行的「代表 model id」随启用平台选取：只勾 Qoder 时用 Qoder 的 id
+  // （与 high.model_order 里现存的大写 id 风格一致），全平台时用第一个 variant。
+  // 这样启用/排序写入的始终是「当前真正会参与调度的那个平台」的 model id。
+  function repId(m,set){
+    const v=m.variants||[m];
+    if(set){ const hit=v.find(x=>set.has(String(x.platform||"workbuddy").toLowerCase())); if(hit) return hit.model; }
+    return v[0].model;
+  }
   const cooldowns=d.cooldowns||[];
   const log=d.log||[];
   const accounts=d.accounts||[];
   const profiles=d.profiles||{};
-  const highOrder=new Set((profiles.high?.model_order)||[]);
   // R2.5：按近 7 天实际调用次数排序，让 low/high 列表顺序 = 真实调用情况。
   const calls=d.model_calls||{};
   const callsOf=(m,mode)=>((calls[m]||{})[mode]||0);
@@ -3396,23 +3460,32 @@ function renderSchedule(d){
   // 关键：ui_low_order 是纯 UI 展示顺序，和调度策略 strategy/model_order 解耦——
   // 拖拽 low 列表绝不能改变「免费优先自动调度」，否则付费模型被拖前面就开始扣费。
   const lowManual=(d.ui_low_order||[]).length>0;
-  const lowRank=new Map([...(d.ui_low_order||[])].map((m,i)=>[m,i]));
-  const lowModels=[...visModels].sort((a,b)=>{
+  // 排名按「合并行里任一 variant 命中配置」判定，兼容合并前写入的任一 id。
+  const lowRank=new Map([...(d.ui_low_order||[])].map((m,i)=>[m.toLowerCase(),i]));
+  const rankOf=(m,rank)=>{
+    let best=Infinity;
+    for(const v of (m.variants||[m])){
+      const r=rank.get(String(v.model||"").toLowerCase());
+      if(r!=null&&r<best) best=r;
+    }
+    return best===Infinity?-1:best;
+  };
+  const lowModels=[...mergedModels].sort((a,b)=>{
     if(lowManual){
-      const ia=lowRank.has(a.model), ib=lowRank.has(b.model);
-      if(ia!==ib) return ia?-1:1;                       // 拖过的排前
-      if(ia&&ib) return lowRank.get(a.model)-lowRank.get(b.model);
+      const ia=rankOf(a,lowRank), ib=rankOf(b,lowRank);
+      if((ia<0)!==(ib<0)) return ia<0?1:-1;           // 拖过的排前
+      if(ia>=0&&ib>=0) return ia-ib;
     }
     const ca=callsOf(a.model,"low"), cb=callsOf(b.model,"low");
     if(ca!==cb) return cb-ca;
     return (b.free_upto||0)-(a.free_upto||0);
   });
   // high：启用的排前（按 high model_order 内的先后），再按调用次数。
-  const highRank=new Map([...((profiles.high?.model_order)||[])].map((m,i)=>[m,i]));
-  const highModels=[...visModels].sort((a,b)=>{
-    const ia=highRank.has(a.model), ib=highRank.has(b.model);
-    if(ia!==ib) return ia?-1:1;                       // 启用的在前
-    if(ia&&ib) return highRank.get(a.model)-highRank.get(b.model);  // 启用项按配置序
+  const highRank=new Map([...((profiles.high?.model_order)||[])].map((m,i)=>[String(m).toLowerCase(),i]));
+  const highModels=[...mergedModels].sort((a,b)=>{
+    const ia=rankOf(a,highRank), ib=rankOf(b,highRank);
+    if((ia<0)!==(ib<0)) return ia<0?1:-1;             // 启用的在前
+    if(ia>=0&&ib>=0) return ia-ib;                     // 启用项按配置序
     return callsOf(b.model,"high")-callsOf(a.model,"high");          // 未启用按调用数
   });
 
@@ -3502,14 +3575,18 @@ function renderSchedule(d){
   }else{
     lowModels.forEach((m,i)=>{
       const nc=callsOf(m.model,"low");
-      h+=`<div class="orderrow${disabled.has(m.model)?" off":""}${d.manual_model===m.model?" manual":""}${!SCH.expand.low&&i>=3?" folded":""}" data-model="${esc(m.model)}">
+      // 停用状态按任一侧 variant 命中（合并后一个模型可能有多个原始 id）
+      const isOff=(m.variants||[m]).some(x=>disabled.has(x.model));
+      const isManual=(m.variants||[m]).some(x=>d.manual_model===x.model);
+      const rep=(m.variants||[m])[0].model;  // low 排序与 high 平台开关无关，固定取首个 variant
+      h+=`<div class="orderrow${isOff?" off":""}${isManual?" manual":""}${!SCH.expand.low&&i>=3?" folded":""}" data-model="${esc(rep)}" data-variants="${esc((m.variants||[m]).map(x=>x.model).join(","))}">
         <span class="handle" title="拖动排序">⣿</span>
-        <span class="omodel">${freePill(m)}${esc(m.display_name||m.model)}${d.manual_model===m.model?'<span class="pill info">指定</span>':""}${nc?`<span class="pill plain">${nc} 次</span>`:""}</span>
+        <span class="omodel">${(m.platforms||[]).map(p=>platBadge(p)).join("")}${freePill(m)}<span class="mname">${esc(m.display_name||m.model)}</span>${isManual?'<span class="pill info">指定</span>':""}${nc?`<span class="pill plain">${nc} 次</span>`:""}</span>
         <span class="ometa">${esc(schMeta(m))}</span>
         <span class="oact">
           <button class="mv" data-mv="up" title="上移">↑</button>
           <button class="mv" data-mv="down" title="下移">↓</button>
-          <button data-ban="1" aria-pressed="${disabled.has(m.model)?"true":"false"}">${disabled.has(m.model)?"已停用":"停用"}</button>
+          <button data-ban="1" aria-pressed="${isOff?"true":"false"}">${isOff?"已停用":"停用"}</button>
         </span></div>`;
     });
   }
@@ -3518,38 +3595,38 @@ function renderSchedule(d){
     lowManual?`<button type="button" class="orderexpand" id="resetLowOrder">恢复自动排序</button>`:""}</div></div>`;
 
   /* --- high 强模型清单（R1 Q3）：勾选 + 排序，账号耗尽自动切下一账号/下一模型 ---
-     R2.37：加平台启用开关 + 平台徽标。只对 high 生效，严格独占（不可用就报错）。 */
-  const allPlats=["workbuddy","qoder"];
-  const rawHp=(d.high_enabled_platforms||[]).map(x=>String(x).toLowerCase());
-  const hpSet=new Set(rawHp.length?rawHp:allPlats);   // 空数组 = 不过滤 = 两个都勾
-  h+=`<div class="group"><div class="ghead">high 强模型清单 · 勾选启用 · 按优先级排序</div>
+     R2.38：同模型跨平台合并成一行 + 平台角标；未勾选平台的专属模型隐藏；
+     底部两行说明收进标题后的问号弹窗。 */
+  h+=`<div class="group"><div class="ghead">high 强模型清单 · 勾选启用 · 按优先级排序
+      <button type="button" class="ghelp" id="highHelp" title="说明" aria-label="说明">${SVG_HELP}</button></div>
     <div class="card">
-    <div class="srow"><div class="sk">启用平台<small>只勾 Qoder 时 high 严格只用 Qoder；限流/余额0/带工具调用会直接报错，不回落其他平台</small></div>
+    <div class="srow"><div class="sk">启用平台<small>只勾一个平台时，high 严格只用该平台，不可用直接报错不回落</small></div>
       <div class="sv selgrp" id="highPlats">${
-        allPlats.map(p=>`<button type="button" data-hplat="${p}" aria-pressed="${hpSet.has(p)?"true":"false"}">${esc(PLAT_FULL[p]||p)}</button>`).join("")
+        ALL_PLATS.map(p=>`<button type="button" data-hplat="${p}" aria-pressed="${hpSet.has(p)?"true":"false"}">${esc(PLAT_FULL[p]||p)}</button>`).join("")
       }</div></div>
     <div class="orderlist${SCH.expand.high?" scroll-list":""}" id="highlist">`;
   if(!highModels.length){
     h+=`<div class="empty">没有可用的模型目录</div>`;
   }else{
     highModels.forEach((m,i)=>{
-      const inHigh=highOrder.has(m.model);
-      const rank=inHigh?highRank.get(m.model)+1:0;
-      const nc=callsOf(m.model,"high");
-      const plat=(m.platform||"workbuddy").toLowerCase();
-      // Qoder 走本地 CLI，暂不接客户端 tools（协议不通，另立需求打通）。如实标出，
-      // 避免用户误以为带工具请求的失败是网关 bug。严格独占下这类请求会报错。
-      const qoderHint=plat==="qoder"?`<span class="pill plain hminor" title="${esc("Qoder 走本地 CLI，暂不接客户端工具调用；带 tools 的 high 请求在严格独占下会报错。工具打通另立需求。")}">纯聊天</span>`:"";
-      h+=`<div class="orderrow${inHigh?"":" off"}${!SCH.expand.high&&i>=3?" folded":""}" data-hmodel="${esc(m.model)}">
+      const rep=repId(m,hpSet);
+      const inHigh=rankOf(m,highRank)>=0;
+      const rank=inHigh?rankOf(m,highRank)+1:0;
+      const nc=callsOf(rep,"high");
+      // 平台角标：合并行列出它存在于哪些平台；未启用平台的角标淡化。
+      const badges=(m.platforms||[m.platform||"workbuddy"]).map(p=>
+        `<span class="ptag${hpSet.has(String(p).toLowerCase())?"":" dim"}" data-plat="${esc(String(p).toLowerCase())}" title="${esc(PLAT_FULL[p]||p)}">${esc(PLAT_SHORT[p]||p)}</span>`).join("");
+      // 该合并行是否有「属于已启用平台」的 variant；没有则整行隐藏（联动）。
+      const shown=(m.variants||[m]).some(x=>hpSet.has(String(x.platform||"workbuddy").toLowerCase()));
+      h+=`<div class="orderrow${inHigh?"":" off"}${!shown?" hidden-plat":""}${!SCH.expand.high&&i>=3?" folded":""}" data-hmodel="${esc(rep)}" data-plats="${esc((m.platforms||[]).join(","))}">
         <span class="handle" style="cursor:${inHigh?"grab":"default"};opacity:${inHigh?1:.3}">⣿</span>
-        <span class="omodel">${platBadge(plat)}${freePill(m)}${esc(m.display_name||m.model)}${inHigh?`<span class="pill info">high #${rank}</span>`:""}${nc?`<span class="pill plain hminor">${nc} 次</span>`:""}${qoderHint}</span>
+        <span class="omodel">${badges}${freePill(m)}<span class="mname">${esc(m.display_name||m.model)}</span>${inHigh?`<span class="pill info">high #${rank}</span>`:""}${nc?`<span class="pill plain hminor">${nc} 次</span>`:""}</span>
         <span class="ometa">${esc(schMeta(m))}</span>
         <span class="oact"><button data-high="1" aria-pressed="${inHigh?"true":"false"}">${inHigh?"已启用":"启用"}</button></span></div>`;
     });
   }
   h+=`</div>${highModels.length>3?`<button type="button" class="orderexpand" data-expand="high">${
     SCH.expand.high?"收起 ▲":"展开全部 "+highModels.length+" 个 ▼"}</button>`:""}
-    <div class="rsub" style="padding:10px 12px">按此顺序选模型；余额耗尽自动换号。客户端填 <code>high</code> 即走此清单。<br>平台开关只作用于 high；严格模式下不回落其他平台。</div>
   </div></div>`;
 
   /* --- 账号池 --- */
@@ -3668,6 +3745,15 @@ async function pollCalibrate(btn){
 
 function bindSchedule(){
   const d=SCH.data||{};
+  const highHelp=document.getElementById("highHelp");
+  if(highHelp) highHelp.addEventListener("click",()=>{
+    infoDialog({title:"high 强模型清单",lines:[
+      "按列表顺序选模型，余额耗尽自动换下一个账号。",
+      "客户端填 high 即走这份清单。",
+      "启用平台只作用于 high：只勾一个平台时严格独占，限流、余额 0 或带工具调用会直接报错，不回落其他平台。",
+      "同一模型在两个平台都有的，合并成一行并列显示平台角标；未勾选平台的专属模型会隐藏。"
+    ]});
+  });
   document.querySelectorAll("[data-strategy]").forEach(b=>b.addEventListener("click",async()=>{
     await saveSchedule({strategy:b.dataset.strategy});
   }));
@@ -3737,6 +3823,15 @@ function bindSchedule(){
       const effective=next.length?next:HP_PLATS;
       document.querySelectorAll("#highPlats [data-hplat]").forEach(b=>
         b.setAttribute("aria-pressed",effective.includes(b.dataset.hplat)?"true":"false"));
+      // R2.38 联动：隐藏「只有未启用平台」的合并行，淡化未启用平台角标。
+      // 每行 data-plats 存该模型出现的所有平台（逗号分隔）。
+      document.querySelectorAll("#highlist .orderrow").forEach(row=>{
+        const plats=(row.dataset.plats||"").split(",").filter(Boolean);
+        const visible=plats.some(x=>effective.includes(x));
+        row.classList.toggle("hidden-plat",!visible);
+        row.querySelectorAll(".ptag").forEach(tag=>
+          tag.classList.toggle("dim",!effective.includes((tag.dataset.plat||"").toLowerCase())));
+      });
     });
   });
 
@@ -3748,7 +3843,8 @@ function bindSchedule(){
       e.stopPropagation();
       const model=row.dataset.hmodel;
       const order=[...(SCH.data?.profiles?.high?.model_order||[])];
-      const i=order.indexOf(model);
+      // 兼容合并前写入的仅大小写不同的旧 id（如 GLM-5.3-Flash vs glm-5.3-flash）
+      const i=order.findIndex(x=>String(x).toLowerCase()===String(model).toLowerCase());
       const enable=i<0;
       if(i>=0) order.splice(i,1); else order.push(model);
       btn.disabled=true;
@@ -3766,10 +3862,11 @@ function bindSchedule(){
       row.classList.toggle("off",!enable);
       const oldPill=omodel.querySelector(".pill.info"); if(oldPill) oldPill.remove();
       if(enable){
-        const rank=order.indexOf(model)+1;
+        const rank=order.findIndex(x=>String(x).toLowerCase()===String(model).toLowerCase())+1;
         const pill=document.createElement("span"); pill.className="pill info";
         pill.textContent="high #"+rank;
-        omodel.insertBefore(pill,omodel.firstChild);
+        const nameEl=omodel.querySelector(".mname");
+        if(nameEl) omodel.insertBefore(pill,nameEl); else omodel.appendChild(pill);
       }
     });
   });
@@ -3794,9 +3891,12 @@ function bindSchedule(){
   document.querySelectorAll("[data-ban]").forEach(b=>b.addEventListener("click",async e=>{
     e.stopPropagation();
     const row=b.closest(".orderrow");
-    const model=row.dataset.model;
+    const variants=(row.dataset.variants||row.dataset.model||"").split(",").filter(Boolean);
     const list=new Set(d.disabled_models||[]);
-    if(list.has(model)) list.delete(model); else list.add(model);
+    // 合并行按「当前是否已停用」决定整体开/关，同模型的全部 variant 一起写，
+    // 避免只停用一侧、另一侧仍参与调度。
+    const isOff=variants.some(x=>list.has(x));
+    variants.forEach(x=>{ if(isOff) list.delete(x); else list.add(x); });
     await saveSchedule({disabled_models:[...list]});
   }));
 

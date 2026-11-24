@@ -34,7 +34,7 @@ class Settings:
         # 对外 API Key：客户端调用本网关用；为空表示不校验（仅本地开发）
         self.api_key = os.environ.get("GATEWAY_API_KEY", "")
 
-        # 管理后台访问令牌（P9）：与火烧云设置页同一套逻辑。
+        # 管理后台访问令牌（P9）：令牌只从 URL/Cookie/Header 传入，未配置则整站 fail-safe。
         # 未配置时后台整站 503（fail-safe，避免公网裸奔）；令牌只从 URL/Cookie/Header 传入。
         #
         # P17 起它升级为「登录口令」：只在登录那一刻用一次，随后换成本地会话 cookie，

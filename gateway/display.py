@@ -22,7 +22,7 @@ import re
 def _load_alias() -> dict[str, str]:
     """从环境变量加载「昵称→显示名」映射（JSON 对象）。
 
-    例如：GATEWAY_DISPLAY_ALIAS='{"主号":"138****0000","my-nick":"139****1111"}'
+    例如：GATEWAY_DISPLAY_ALIAS='{"my-nick":"<掩码手机号>"}'
     默认空表：没有需要改名的账号时零配置。
     """
     import json

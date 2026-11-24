@@ -1455,7 +1455,7 @@ def _active_upstream() -> dict[str, Any]:
     """全站唯一的「当前上游」口径来源（P49）：模型 + 账号一体。
 
     返回调度器此刻实际会选的那个候选：
-      {"model": "hy4flash-free", "account": "138****0000",
+      {"model": "hy4flash-free", "account": "<账号掩码>",
        "platform": "workbuddy", "platform_label": "WorkBuddy"}
 
     P49 之前只统一了**模型**口径（P40 接入页 → P48 模型页 → P49 顶栏/路由页），

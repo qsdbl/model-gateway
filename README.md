@@ -45,10 +45,18 @@
 - Python 3.10+
 - 无需 Node.js（两个 CLI 都可用原生/自带方式安装）
 
-### 2. 安装 Python 依赖
+### 2. 克隆并进入目录
 
 ```bash
+git clone <你的仓库地址> model-gateway
 cd model-gateway
+```
+
+（下文所有命令都在项目根目录执行。）
+
+### 3. 安装 Python 依赖
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -56,7 +64,7 @@ pip install -r requirements.txt
 
 （`requirements.txt` 含运行依赖 `fastapi / uvicorn / segno`——其中 `segno` 用于扫码登录，漏装会导致扫码报错。测试另需 `pip install pytest httpx`。）
 
-### 3. 配置
+### 4. 配置
 
 ```bash
 cp .env.example .env
@@ -74,7 +82,7 @@ GATEWAY_ADMIN_TOKEN=你自己的一串随机口令
 GATEWAY_API_KEY=另一串随机key
 ```
 
-### 4. 启动
+### 5. 启动
 
 ```bash
 source .venv/bin/activate

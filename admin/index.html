@@ -63,7 +63,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sa
 
 .top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0 16px}
 h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
-.sub{font-size:13px;line-height:18px;color:var(--label-3);margin-top:2px}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;line-height:18px;
   color:var(--accent);background:var(--surface);border:1px solid var(--separator);
   border-radius:999px;padding:6px 12px;white-space:nowrap;cursor:pointer;flex:0 0 auto}
@@ -78,19 +77,8 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
   font-size:13px;line-height:18px;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer;
   white-space:nowrap;transition:background .15s,color .15s}
 .seg button[aria-selected="true"]{background:var(--surface);color:var(--label);box-shadow:0 1px 2px rgba(0,0,0,.12)}
-/* R2.7 实时刷新状态条：极矮（24px），跟在 tab 行下方，不挤压 6 个 tab 布局 */
-.livebar{display:flex;align-items:center;gap:6px;margin:-8px 0 12px;padding:0 2px;
-  font-size:11px;line-height:16px;color:var(--label-3)}
-.liveDot{width:7px;height:7px;border-radius:50%;background:var(--label-3);flex:0 0 auto;transition:background .2s}
-.liveDot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
-.liveText{flex:1 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.liveToggle{border:1px solid var(--separator);background:var(--surface);color:var(--label-2);
-  border-radius:999px;font-size:11px;line-height:16px;font-weight:600;padding:2px 9px;cursor:pointer;
-  white-space:nowrap;font-family:inherit;
-  display:inline-flex;align-items:center;gap:4px;min-height:22px}
-.liveToggle[aria-pressed="false"]{color:var(--label-3)}
 /* R2.28：图标按钮内 svg 与文字基线对齐、不收缩 */
-.liveToggle svg,.swPlayInline svg{flex:0 0 auto;display:block}
+.swPlayInline svg{flex:0 0 auto;display:block}
 /* R2.34：池占比迷你条——嵌在「全部」按钮内，绿色=免费池占比、灰=付费池。
    小屏隐藏绝对数字后，比例条仍一眼可见（用户要看的是 free/paid 比例关系）。 */
 .sw-bar .swmix{display:inline-block;width:18px;height:5px;margin-left:5px;
@@ -709,7 +697,6 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
   <div class="top">
     <div>
       <h1>模型网关</h1>
-      <div class="sub" id="topSub">low · 网关</div>
     </div>
     <button class="chip" id="chip" title="切换模型"><span class="dot"></span><b id="chipModel">—</b></button>
   </div>
@@ -722,11 +709,6 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
     <button role="tab" aria-selected="false" data-p="routes">路由</button>
     <button role="tab" aria-selected="false" data-p="security">安全</button>
   </div>
-
-  <!-- R2.7 实时刷新：一行极小状态条，告诉用户数据是否在自动刷新，可一键暂停/恢复 -->
-  <div class="livebar"><span class="liveDot" id="liveDot"></span>
-    <span class="liveText" id="liveText">实时刷新已开</span>
-    <button class="liveToggle" id="liveToggle" aria-pressed="true"></button></div>
 
   <div id="body"><div class="empty"><span class="spin"></span> 加载中…</div></div>
   </div>
@@ -775,9 +757,6 @@ const num=v=>Number(v).toLocaleString("zh-CN",{maximumFractionDigits:2});
 /* R2.28：单色 SVG 图标（替代 ⏱/⏸/▶ emoji 码点——它们在部分系统字体下渲染成
    彩色表情包）。依据 Apple HIG Icons：矢量(SVG)、单色模板(currentColor)、
    统一线宽(stroke-width=1.8)、16px 网格、与相邻文字同权重。 */
-const SVG_LIVE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
-  +'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">'
-  +'<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.3 1.5"/></svg>';
 const SVG_PAUSE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
   +'stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">'
   +'<path d="M5.5 3.5v9M10.5 3.5v9"/></svg>';
@@ -2576,14 +2555,11 @@ function renderSecurity(d){
     <div class="rtitle">收件邮箱</div>
     <div class="rsub">${em.value?esc(em.masked):"还没设置 —— 点这里填一个"}</div></div>
     <div class="rright">${pill(em.value?"修改":"设置",em.value?"ok":"warn")}</div></div>`;
-  h+=`<div class="row"><div class="rmain"><div class="rtitle">发信服务器</div>
+  h+=`<div class="row tap" id="smtpEdit"><div class="rmain"><div class="rtitle">发件邮箱</div>
     <div class="rsub wrap">${ml.configured
-      ? esc(ml.host+":"+ml.port)+" · 用 "+esc(ml.user)+" 发信"
-      : "还没配置 SMTP —— 点下一行填写"}</div></div>
+      ? esc(ml.from||ml.user||"还没填发件地址")
+      : "还没配置 —— 点这里填写"}</div></div>
     <div class="rright">${pill(ml.configured?"已配置":"未配置",ml.configured?"ok":"err")}</div></div>`;
-  h+=`<div class="row tap" id="smtpEdit"><div class="rmain"><div class="rtitle">SMTP 配置</div>
-    <div class="rsub">主机 / 端口 / 账号 / 授权码 / 收件相关</div></div>
-    <div class="rright"><span class="mono">→</span></div></div>`;
   h+=`<div class="row tap" id="emailTest"><div class="rmain"><div class="rtitle">发一封测试邮件</div>
     <div class="rsub">${em.ready ? "" : "先填邮箱并配置 SMTP"}</div></div>
     <div class="rright"><span class="mono">→</span></div></div>`;
@@ -3934,13 +3910,6 @@ async function refreshChip(){
     const chip=document.getElementById("chip");
     document.getElementById("chipModel").textContent=d.active_model||"—";
     chip.classList.toggle("paid",!!d.manual);
-    const acc=d.account;
-    document.getElementById("topSub").textContent=[
-      d.public_model||"low",
-      /* R1 Q5：顶栏平台名也用缩写，与列表角标一致（PLAT_SHORT 同源） */
-      acc?(PLAT_SHORT[(acc.platform||"").toLowerCase()]||acc.platform_label):null,
-      acc?acc.label:null,
-    ].filter(Boolean).join(" · ");
   }catch{ document.getElementById("chipModel").textContent="—"; }
 }
 
@@ -3963,14 +3932,8 @@ const LIVE={
   busy:false,             // 防止上一轮没结束又来一轮
   lastAt:0,
 };
-function liveStatus(text,on){
-  const el=document.getElementById("liveDot");
-  if(!el) return;
-  el.classList.toggle("on",!!on);
-  el.title=text;
-  const t=document.getElementById("liveText");
-  if(t) t.textContent=text;
-}
+/* 刷新状态条已按用户要求移除，保留空函数以兼容现有调用点；5 秒刷新逻辑本身不变。 */
+function liveStatus(text,on){}
 async function liveRefresh(){
   if(!LIVE.enabled||LIVE.busy||document.hidden) return;
   const p=LIVE.tab;
@@ -4025,29 +3988,12 @@ function armLive(){
   if(!LIVE.enabled||document.hidden||LIVE.tab==="guide"||LIVE.tab==="routes") return;
   LIVE.timer=setInterval(liveRefresh,LIVE.interval);
 }
-/* R2.28：实时开关用单色 SVG 时钟/暂停，不再用会变彩色 emoji 的 ⏱/⏸ 码点。 */
-function paintLiveToggle(){
-  const btn=document.getElementById("liveToggle"); if(!btn) return;
-  btn.setAttribute("aria-pressed",String(LIVE.enabled));
-  btn.innerHTML=(LIVE.enabled?SVG_LIVE:SVG_PAUSE)+(LIVE.enabled?"实时":"暂停");
-}
-function toggleLive(){
-  LIVE.enabled=!LIVE.enabled;
-  paintLiveToggle();
-  liveStatus(LIVE.enabled?"实时刷新已开":"实时刷新已暂停",LIVE.enabled);
-  armLive();
-}
-
 (async function init(){
   await loadConfig();
-  if(CONFIG) document.getElementById("topSub").textContent=CONFIG.public_model+" · 网关";
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden){ if(LIVE.timer){clearInterval(LIVE.timer);LIVE.timer=null;} }
     else armLive();
   });
-  const liveBtn=document.getElementById("liveToggle");
-  if(liveBtn) liveBtn.addEventListener("click",toggleLive);
-  paintLiveToggle();   // R2.28：首屏渲染单色 SVG 图标（替代 emoji）
   selectTab(QS.get("tab")||"models");
   refreshChip();
   // R2.5：横竖屏/窗口缩放后按新宽度重算流向图/时间轴侧边留白，避免又挤成一竖条。

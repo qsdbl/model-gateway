@@ -130,7 +130,6 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .group{margin-bottom:20px}
 .ghead{font-size:12px;line-height:16px;color:var(--label-3);font-weight:600;
   text-transform:uppercase;letter-spacing:.5px;padding:0 4px 6px;display:flex;align-items:center;gap:6px}
-.ghead .count{font-weight:500;letter-spacing:0;text-transform:none}
 .card{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
 .card+.card{margin-top:10px}
 /* R1：长列表固定高度、内部滚动（用户反馈列表太长整页滚动很乱）。
@@ -406,16 +405,24 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .ustat .u2{font-size:11px;line-height:15px;color:var(--label-3);text-align:right;flex:0 0 auto;max-width:52%}
 /* 日期控件：左箭头 + 日期（点开日历）+ 右箭头，沿用 .hseg 的 7px 圆角与 caption 字号。
    规范依据：Apple HIG Date Pickers（单个日期用紧凑控件 + 弹层日历，不用整排按钮）。 */
-.udays{display:flex;align-items:center;gap:0;padding:8px 0 0;width:max-content;max-width:100%}
+/* .udtop：日期控件与柱状/折线切换同一行，一左一右；窄屏自动换行不挤成一团。 */
+.udtop{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:8px}
+.udays{display:inline-flex;align-items:center;gap:0;max-width:100%;border:1px solid var(--separator);
+  border-radius:7px;overflow:hidden;background:var(--surface-2)}
+/* 手机端描边别太重：整体用一个浅边框包住，内部按钮不再各自描边，
+   但按钮之间保留 1px 分隔线，和 .hseg 分段控件一个观感。 */
 .udays button{font:inherit;font-size:12px;line-height:16px;color:var(--label);cursor:pointer;
-  background:var(--surface-2);border:1px solid var(--separator);height:28px}
+  background:transparent;border:0;height:28px}
 .ud-nav{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:0 0 30px;
-  border-radius:7px 0 0 7px;color:var(--label-2)}
-.ud-nav:last-child{border-radius:0 7px 7px 0}
+  color:var(--label-2)}
+.udays .ud-nav:first-child{border-right:1px solid var(--separator)}
 .ud-nav:disabled{color:var(--label-3);opacity:.4;cursor:not-allowed}
-.ud-date{min-width:96px;padding:0 10px;border-left:0;border-right:0;font-weight:600;
-  display:inline-flex;align-items:center;justify-content:center;gap:5px}
-.ud-date svg{opacity:.6;flex:0 0 auto}
+.udays .ud-date{min-width:88px;padding:0 10px;font-weight:600;border-right:1px solid var(--separator);
+  display:inline-flex;align-items:center;justify-content:center}
+/* 图表切换与日期控件完全同款：28px 高、12px 字、7px 圆角、1px 边框、
+   内部分隔线一致；去掉 hctl 的外边距。 */
+.udtop .hctl{margin-top:0}
+.udtop .hseg button{height:28px;font-size:12px;line-height:16px;padding:0 10px}
 /* 自定义日历弹层（不用浏览器默认 input[type=date]，与后台控件同风格） */
 .cal{width:min(302px,100%);max-width:100%;margin:0 auto}
 .cal .calhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
@@ -800,9 +807,6 @@ const SVG_CHEVRON_L='<svg viewBox="0 0 16 16" width="13" height="13" fill="none"
 const SVG_CHEVRON_R='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
   +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   +'<path d="M6 3.5 10.5 8 6 12.5"/></svg>';
-const SVG_CHEVRON_D='<svg viewBox="0 0 16 16" width="12" height="12" fill="none" '
-  +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-  +'<path d="M4 6l4 4 4-4"/></svg>';
 
 /* 单位与钱的写法统一：credits_workbuddy → 积分，避免 "1265.65000006 credits_workbuddy" */
 const UNIT={credits_workbuddy:"积分",credits_wb:"积分",credits_qoder:"积分",mock_credits:"积分"};
@@ -1271,7 +1275,6 @@ function freeBarHTML(f){
   const free=h.free_pairs||0, cap=h.free_capacity||0;
   const pct=cap?Math.round((free/cap)*100):0;
   const level=cap===0?"empty":(pct===100?"high":(pct>=50?"mid":"low"));
-  const label={empty:"已耗尽",low:"紧张",mid:"一般",high:"满"}[level];
   let timeText="";
   if(est.available){
     if(est.minutes_left===0) timeText="当前已在付费模式";
@@ -1279,7 +1282,9 @@ function freeBarHTML(f){
     else timeText="按最近强度，约 "+est.minutes_left+" 分钟后可能进入付费"
       +(est.range?"（区间 "+est.range[0]+"–"+est.range[1]+" 分钟）":"");
   }else{
-    timeText=est.reason||"样本不足，暂不预测";
+    // 没有预测数据时不再显示「样本不足，暂不 Prediction」这类占位噪音，
+    // 留空由调用方按 timeText 为空隐藏整行。
+    timeText=est.reason||"";
   }
   const reset=last.reset_pending?" · 上次 429 将于 "+hhmm(last.reset_at)+" 重置":"";
   // 真免费模型（目录 pricing=free，无论多长都扣 0）
@@ -1288,15 +1293,11 @@ function freeBarHTML(f){
   const lim=h.short_free_limits||{};
   const shortParts=(h.short_free_models||[]).map(m=>
     m+(lim[m]?"（≤"+lim[m]+" token）":"")).join("、");
-  const realTok=h.real_tokens_p50;
-  const probeLine=realTok
-    ? `中位 ${realTok.toLocaleString()} token`
-    : `探针 ${h.est_tokens} token`;
   return `<div class="group"><div class="card freebar" data-level="${level}">
-    <div class="fbhead"><b>免费池 · ${label}</b><span class="fbnum">${free}/${cap} 可用</span></div>
+    <div class="fbhead"><b>免费池</b><span class="fbnum">${free}/${cap} 可用</span></div>
     <div class="fbtrack"><i style="width:${pct}%"></i></div>
-    <div class="fbsub">${esc(timeText)}${esc(reset)}</div>
-    <div class="fbsub">${esc(probeLine)} · 真免费模型：${esc(models)}</div>
+    ${(timeText||reset)?`<div class="fbsub">${esc(timeText)}${esc(reset)}</div>`:""}
+    <div class="fbsub">模型：${esc(models)}</div>
     ${shortParts?`<div class="fbsub fbshort">短请求免扣：${esc(shortParts)}</div>`:""}
   </div></div>`;
 }
@@ -1517,10 +1518,17 @@ const dayLabel=k=>{
 function dayChips(label){
   const sel=US.day.get(label)||todayKey(), t=todayKey();
   const canNext=sel<t;   // 字符串 YYYY-MM-DD 字典序即时间序
-  return `<div class="udays">
-    <button type="button" class="ud-nav" data-day-step="-1" aria-label="前一天" title="前一天">${SVG_CHEVRON_L}</button>
-    <button type="button" class="ud-date" data-day-pick title="选择日期">${esc(dayLabel(sel))}${SVG_CHEVRON_D}</button>
-    <button type="button" class="ud-nav" data-day-step="1" aria-label="后一天" title="后一天" ${canNext?"":"disabled"}>${SVG_CHEVRON_R}</button>
+  // 柱状/折线切换与日期控件同一行（一左一右）；窄屏 .udtop 自动换行。
+  const chart=US.chart.get(label)||"bar";
+  const chartSeg=`<div class="hseg">${[["bar","柱状"],["line","折线"]].map(([k,n])=>
+    `<button type="button" data-chart="${k}" aria-pressed="${chart===k}">${n}</button>`).join("")}</div>`;
+  return `<div class="udtop">
+    <div class="udays">
+      <button type="button" class="ud-nav" data-day-step="-1" aria-label="前一天" title="前一天">${SVG_CHEVRON_L}</button>
+      <button type="button" class="ud-date" data-day-pick title="选择日期">${esc(dayLabel(sel))}</button>
+      <button type="button" class="ud-nav" data-day-step="1" aria-label="后一天" title="后一天" ${canNext?"":"disabled"}>${SVG_CHEVRON_R}</button>
+    </div>
+    ${chartSeg}
   </div>`;
 }
 
@@ -1702,9 +1710,9 @@ function hoursHTML(label,d){
     ? `<div class="hpeak"><b>${esc(sel)}:00</b> · ${met.fmt(val(selH))}</div>`
     : `<div class="hpeak">合计 <b>${met.fmt(sumVal)}</b> · 全天</div>`;
 
+  // 柱状/折线切换已挪到日期控件同一行（dayChips 里），这里只留维度与模式。
   const controls=`<div class="hctl">
     <div class="hseg">${METRICS.map(m=>`<button type="button" data-metric="${m.k}" aria-pressed="${metric===m.k}">${m.n}</button>`).join("")}</div>
-    <div class="hseg">${[["bar","柱状"],["line","折线"]].map(([k,n])=>`<button type="button" data-chart="${k}" aria-pressed="${chart===k}">${n}</button>`).join("")}</div>
     <div class="hseg">${MODES.map(([k,n])=>`<button type="button" data-mode="${k}" aria-pressed="${mode===k}">${n}</button>`).join("")}</div>
   </div>`;
 
@@ -2457,9 +2465,12 @@ function importDialog(opts){
         ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
         // R2.38：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
         const acc=r.account||{};
+        // 账号名一律过 dispLabel：底层 label（如「主号」）是内部标签，
+        // 展示必须是手机号掩码，别把「主号」露出去。
+        const shown=dispLabel(acc.label||"账号");
         toast(acc.replaced
-          ? `该账号已存在，已更新登录状态：${acc.label||"账号"}`
-          : `已添加：${acc.label||"账号"}`);
+          ? `该账号已存在，已更新登录状态：${shown}`
+          : `已添加：${shown}`);
         await refreshChip();
         load("accounts");
       }catch(e){
@@ -2524,9 +2535,10 @@ function importDialog(opts){
       ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
       // R2.38：区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
       const acc=r.account||{};
+      const shown=dispLabel(acc.label||"账号");
       toast(acc.replaced
-        ? `该账号已存在，已更新登录状态：${acc.label||"账号"}`
-        : `已添加：${acc.label||"账号"}`);
+        ? `该账号已存在，已更新登录状态：${shown}`
+        : `已添加：${shown}`);
       await refreshChip();
       load("accounts");
     }catch(e){
@@ -2872,7 +2884,7 @@ function switchHistoryHTML(segs){
   const total=tc.free+tc.paid||1;
   const freePct=Math.round(tc.free/total*100);
   return `<div class="group">
-    <div class="ghead">调度切换 · 最近 ${segs.length} 段 <span class="count">（点图看每一次跳转）</span></div>
+    <div class="ghead">调度切换 · 最近 ${segs.length} 段</div>
     <div class="hseg" id="swSeg" style="margin-bottom:6px">
       <button type="button" data-swview="recent" aria-pressed="${SW.view==="recent"?"true":"false"}">最近使用</button>
       <button type="button" data-swview="flow" aria-pressed="${SW.view==="flow"?"true":"false"}">流向图</button>

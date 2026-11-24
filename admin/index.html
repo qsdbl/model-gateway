@@ -401,11 +401,38 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .ustat .u1 b.zero{color:var(--label-2)}
 .ustat .u1 em{font-style:normal;font-size:12px;line-height:16px;color:var(--label-3);margin-left:5px}
 .ustat .u2{font-size:11px;line-height:15px;color:var(--label-3);text-align:right;flex:0 0 auto;max-width:52%}
-.udays{display:flex;gap:4px;overflow-x:auto;padding:8px 0 0;scrollbar-width:none}
-.udays::-webkit-scrollbar{display:none}
-.udays button{flex:0 0 auto;font:inherit;font-size:11px;line-height:15px;padding:4px 7px;border-radius:7px;
-  border:1px solid var(--separator);background:var(--surface-2);color:var(--label-2);cursor:pointer}
-.udays button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 日期控件：左箭头 + 日期（点开日历）+ 右箭头，沿用 .hseg 的 7px 圆角与 caption 字号。
+   规范依据：Apple HIG Date Pickers（单个日期用紧凑控件 + 弹层日历，不用整排按钮）。 */
+.udays{display:flex;align-items:center;gap:0;padding:8px 0 0;width:max-content;max-width:100%}
+.udays button{font:inherit;font-size:12px;line-height:16px;color:var(--label);cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--separator);height:28px}
+.ud-nav{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:0 0 30px;
+  border-radius:7px 0 0 7px;color:var(--label-2)}
+.ud-nav:last-child{border-radius:0 7px 7px 0}
+.ud-nav:disabled{color:var(--label-3);opacity:.4;cursor:not-allowed}
+.ud-date{min-width:96px;padding:0 10px;border-left:0;border-right:0;font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.ud-date svg{opacity:.6;flex:0 0 auto}
+/* 自定义日历弹层（不用浏览器默认 input[type=date]，与后台控件同风格） */
+.cal{width:min(302px,100%);max-width:100%;margin:0 auto}
+.cal .calhead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
+.cal .caltitle{font-size:15px;font-weight:600;color:var(--label)}
+.cal .calnav{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
+  border:1px solid var(--separator);border-radius:7px;background:var(--surface-2);
+  color:var(--label-2);cursor:pointer}
+.cal .calnav:disabled{opacity:.35;cursor:not-allowed}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:4px 12px 12px}
+.calgrid .cw{font-size:11px;line-height:16px;color:var(--label-3);text-align:center;padding:4px 0}
+.calgrid .cd{position:relative;display:flex;align-items:center;justify-content:center;
+  height:34px;border:0;border-radius:8px;background:transparent;color:var(--label);
+  font:inherit;font-size:13px;cursor:pointer}
+.calgrid .cd:hover:not(:disabled){background:var(--fill)}
+.calgrid .cd:disabled{color:var(--label-3);opacity:.35;cursor:not-allowed}
+.calgrid .cd[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.calgrid .cd.today:not([aria-pressed="true"])::after{content:"";position:absolute;bottom:4px;
+  width:3px;height:3px;border-radius:50%;background:var(--accent)}
+.calgrid .cd.empty{visibility:hidden}
+.calfoot{padding:0 16px 14px;font-size:11px;line-height:16px;color:var(--label-3);text-align:center}
 /* P48 图表控件：segmented control，Apple HIG 11/13 caption，选中态用强调色 */
 .hctl{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .hseg{display:inline-flex;border:1px solid var(--separator);border-radius:7px;overflow:hidden}
@@ -762,6 +789,17 @@ const SVG_PAUSE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
   +'<path d="M5.5 3.5v9M10.5 3.5v9"/></svg>';
 const SVG_PLAY='<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
   +'<path d="M4.5 3.2a.7.7 0 0 1 1.06-.6l7 4.8a.7.7 0 0 1 0 1.2l-7 4.8a.7.7 0 0 1-1.06-.6z"/></svg>';
+
+/* 日期控件左右箭头（Apple HIG Icons：单色 currentColor、统一线宽） */
+const SVG_CHEVRON_L='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
+  +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  +'<path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
+const SVG_CHEVRON_R='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
+  +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  +'<path d="M6 3.5 10.5 8 6 12.5"/></svg>';
+const SVG_CHEVRON_D='<svg viewBox="0 0 16 16" width="12" height="12" fill="none" '
+  +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  +'<path d="M4 6l4 4 4-4"/></svg>';
 
 /* 单位与钱的写法统一：credits_workbuddy → 积分，避免 "1265.65000006 credits_workbuddy" */
 const UNIT={credits_workbuddy:"积分",credits_wb:"积分",credits_qoder:"积分",mock_credits:"积分"};
@@ -1462,17 +1500,65 @@ function gapNote(label,d){
     ${unknown>0?`<div class="gapnote">${unknown} 次未回传金额，差额无法精确拆分。</div>`:""}`;
 }
 
-/* 近 7 天日期切换：今天/昨天给名字，更早给 M-D */
+/* 日期控件：左箭头(前一天) + 日期(点开日历) + 右箭头(后一天)。默认今天；
+   今天时右箭头置灰不可点。数据最多保留 90 天，日历不让它选更早或未来。 */
+const keyOf=d=>d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+const parseKey=k=>{const[a,b,c]=String(k).split("-").map(Number);return new Date(a,b-1,c);};
+const shiftKey=(k,delta)=>{const d=parseKey(k);d.setDate(d.getDate()+delta);return keyOf(d);};
+const dayLabel=k=>{
+  const t=todayKey(); if(k===t) return "今天";
+  if(k===shiftKey(t,-1)) return "昨天";
+  const d=parseKey(k), now=new Date();
+  return (d.getFullYear()===now.getFullYear()?"":d.getFullYear()+"年")+(d.getMonth()+1)+"月"+d.getDate()+"日";
+};
 function dayChips(label){
-  const sel=US.day.get(label)||todayKey();
-  const out=[];
-  for(let i=6;i>=0;i--){
-    const d=new Date(); d.setDate(d.getDate()-i);
-    const k=d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
-    const nm=i===0?"今天":(i===1?"昨天":(d.getMonth()+1)+"-"+d.getDate());
-    out.push(`<button type="button" data-day="${k}" aria-pressed="${k===sel}">${nm}</button>`);
-  }
-  return `<div class="udays">${out.join("")}</div>`;
+  const sel=US.day.get(label)||todayKey(), t=todayKey();
+  const canNext=sel<t;   // 字符串 YYYY-MM-DD 字典序即时间序
+  return `<div class="udays">
+    <button type="button" class="ud-nav" data-day-step="-1" aria-label="前一天" title="前一天">${SVG_CHEVRON_L}</button>
+    <button type="button" class="ud-date" data-day-pick title="选择日期">${esc(dayLabel(sel))}${SVG_CHEVRON_D}</button>
+    <button type="button" class="ud-nav" data-day-step="1" aria-label="后一天" title="后一天" ${canNext?"":"disabled"}>${SVG_CHEVRON_R}</button>
+  </div>`;
+}
+
+/* 自定义日历弹层：返回选中的 YYYY-MM-DD，取消返回 null。
+   风格沿用后台 overlay/alert，7 列网格；只能选 [今天-90天, 今天]。 */
+function datePicker(current){
+  return new Promise(resolve=>{
+    const ov=document.getElementById("overlay"), box=document.getElementById("alert");
+    const today=todayKey(), min=shiftKey(today,-90);
+    let sel=current>today?today:current, view=new Date(parseKey(sel).getFullYear(),parseKey(sel).getMonth(),1);
+    const dow=["日","一","二","三","四","五","六"];
+    const close=val=>{ ov.classList.remove("show"); ov.onclick=null; box.innerHTML=""; box.classList.remove("wide"); resolve(val); };
+    function paint(){
+      const y=view.getFullYear(), m=view.getMonth();
+      const first=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate();
+      const atMin=y*12+m <= (+min.slice(0,4))*12+(+min.slice(5,7)-1);
+      const atMax=y*12+m >= (+today.slice(0,4))*12+(+today.slice(5,7)-1);
+      let g=dow.map(w=>`<div class="cw">${w}</div>`).join("");
+      for(let i=0;i<first;i++) g+='<div class="cd empty"></div>';
+      for(let d=1;d<=days;d++){
+        const k=keyOf(new Date(y,m,d));
+        const disabled=k<min||k>today;
+        g+=`<button type="button" class="cd${k===today?" today":""}" data-pick-day="${k}"
+             aria-pressed="${k===sel}" ${disabled?"disabled":""}>${d}</button>`;
+      }
+      box.innerHTML=`<div class="cal"><div class="calhead">
+          <button type="button" class="calnav" data-mon="-1" aria-label="上个月" ${atMin?"disabled":""}>${SVG_CHEVRON_L}</button>
+          <span class="caltitle">${y}年${m+1}月</span>
+          <button type="button" class="calnav" data-mon="1" aria-label="下个月" ${atMax?"disabled":""}>${SVG_CHEVRON_R}</button>
+        </div><div class="calgrid">${g}</div>
+        <div class="calfoot">可选范围：最近 90 天 · 点日期即选中</div></div>`;
+      box.querySelectorAll("[data-mon]").forEach(b=>b.onclick=()=>{
+        view.setMonth(view.getMonth()+(+b.dataset.mon)); paint();
+      });
+      box.querySelectorAll("[data-pick-day]").forEach(b=>b.onclick=()=>close(b.dataset.pickDay));
+    }
+    paint();
+    box.classList.add("wide");
+    ov.classList.add("show");
+    ov.onclick=e=>{ if(e.target===ov) close(null); };
+  });
 }
 
 function modelRows(d,mode){
@@ -1795,11 +1881,18 @@ function repaintHours(label){
 
 function bindUsage(host,label,day){
   host.onclick=async e=>{
-    const db=e.target.closest("[data-day]");
-    if(db){
-      US.day.set(label,db.dataset.day);
-      US.hour.delete(label);
-      paintHours(label);
+    const step=e.target.closest("[data-day-step]");
+    if(step){
+      const t=todayKey(), next=shiftKey(US.day.get(label)||t,+step.dataset.dayStep);
+      if(next>t || next<shiftKey(t,-90)) return;   // 不允许未来 / 早于 90 天
+      US.day.set(label,next); US.hour.delete(label); paintHours(label); return;
+    }
+    const dp=e.target.closest("[data-day-pick]");
+    if(dp){
+      const picked=await datePicker(US.day.get(label)||todayKey());
+      if(picked && picked!==US.day.get(label)){
+        US.day.set(label,picked); US.hour.delete(label); paintHours(label);
+      }
       return;
     }
     const mb=e.target.closest("[data-metric]");

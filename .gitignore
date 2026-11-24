@@ -1,0 +1,37 @@
+# 凭据 / 密钥（明文永不进 git）
+.env
+.env.*
+!.env.example
+*.info
+*.token
+credentials/
+secrets/
+*.pem
+*.key
+
+# 数据库（运行时生成，跨重启持久保留，但不进 git）
+data/*
+!data/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# 日志
+*.log
+logs/
+
+# 编辑器 / 系统
+.DS_Store
+.vscode/
+.idea/
+*.swp

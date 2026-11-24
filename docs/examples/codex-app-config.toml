@@ -1,0 +1,38 @@
+# Codex App 桌面客户端的网关专用配置（顶层，不是 profile）
+#
+# 依据：Codex App 只读 ~/.codex/config.toml 的顶层值，--profile 是 CLI-only
+# （见 https://github.com/anschmieg/tokligence-gateway 关于桌面客户端的说明）。
+# 因此用独立 CODEX_HOME 承载本文件，主 ~/.codex/config.toml 完全不变。
+#
+# 关闭自动注入块的理由与来源同 codex-gateway.config.toml：
+#   https://developers.openai.com/codex/config-reference
+#   https://developers.openai.com/codex/agent-configuration/subagents
+# 不伪装客户端身份、不改写正文；网关侧无任何绕过逻辑。
+
+model = "low"
+model_provider = "gateway"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+model_instructions_file = "./docs/examples/codex-gateway-instructions.md"
+include_permissions_instructions = false
+include_apps_instructions = false
+include_collaboration_mode_instructions = false
+
+[features]
+plugins = false
+memories = false
+# App 的 hooks.json SessionStart 输出会以 developer 消息触发上游 11128
+hooks = false
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[model_providers.gateway]
+name = "gateway"
+base_url = "http://127.0.0.1:18088/v1"
+wire_api = "responses"
+requires_openai_auth = false
+env_key = "MGW_KEY"

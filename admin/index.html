@@ -1,0 +1,4063 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 禁止双击/双指放大：移动端误触放大后整个后台排版会错位。
+     maximum-scale=1 + user-scalable=no；iOS Safari 10+ 会忽略这两个声明，
+     所以下面还有 CSS touch-action 和 JS gesturestart 两道兜底。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F2F2F7">
+<title>Personal Model Gateway</title>
+<style>
+/*
+ * 设计规范来源（用户要求：不凭感觉写设计，注明来源与数值）：
+ * 1) Typography — Apple HIG Typography（Dynamic Type Large 档）
+ *    https://developer.apple.com/design/human-interface-guidelines/typography
+ *    22/28 title2 · 20/25 title3 · 17/22 body · 15/20 subheadline
+ *    13/18 footnote · 12/16 caption1 · 11/13 caption2
+ * 2) Color — Apple HIG Color（语义色，明暗两套）
+ *    https://developer.apple.com/design/human-interface-guidelines/color
+ * 3) 列表 — iOS「分组列表」范式：行高 44–56pt、分组间隔 24–32
+ *    https://developer.apple.com/design/human-interface-guidelines/lists-and-tables
+ * 4) 弹窗 — iOS Alert：宽 270pt、圆角 14、标题 17 semibold、按钮行高 44
+ *    https://developer.apple.com/design/human-interface-guidelines/alerts
+ * 5) 控件 — iOS Segmented Control / Search Field：高 32–36、圆角 8–10
+ *    https://developer.apple.com/design/human-interface-guidelines/segmented-controls
+ * 正文对比度 ≥4.5:1（浅色 #000/#4A4A50 on #FFF、深色 #FFF/#C7C7CC on #1C1C1E）。
+ */
+:root{
+  --bg:#F2F2F7; --surface:#FFFFFF; --surface-2:#F7F7FA;
+  --label:#000000; --label-2:#4A4A50; --label-3:#6E6E73;
+  --separator:#D8D8DC; --fill:#E9E9EE; --accent:#0A62C4;
+  --ok:#1A7F37; --warn:#A8480A; --err:#C62828;
+  --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.05);
+}
+:root[data-theme="dark"]{
+  --bg:#000000; --surface:#1C1C1E; --surface-2:#2C2C2E;
+  --label:#FFFFFF; --label-2:#C7C7CC; --label-3:#98989D;
+  --separator:#38383A; --fill:#3A3A3C; --accent:#4DA3FF;
+  --ok:#32D74B; --warn:#FF9F0A; --err:#FF453A;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme]){
+    --bg:#000000; --surface:#1C1C1E; --surface-2:#2C2C2E;
+    --label:#FFFFFF; --label-2:#C7C7CC; --label-3:#98989D;
+    --separator:#38383A; --fill:#3A3A3C; --accent:#4DA3FF;
+    --ok:#32D74B; --warn:#FF9F0A; --err:#FF453A;
+    --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);color:var(--label)}
+/* 禁止双击/双指缩放（规范：MDN touch-action
+   https://developer.mozilla.org/en-US/docs/Web/CSS/touch-action）：
+   pan-x pan-y 保留单指滚动与点击，但关掉 double-tap zoom 和 pinch zoom。
+   注意 manipulation 不够——它仍允许捏合缩放。比 user-scalable=no 可靠，
+   后者被 iOS Safari 10+ 刻意忽略（另有 JS gesturestart 兜底）。 */
+html,body{touch-action:pan-x pan-y}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;
+  font-size:17px;line-height:22px;-webkit-font-smoothing:antialiased;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+.wrap{max-width:720px;margin:0 auto;padding:16px 16px 0}
+
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0 16px}
+h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
+.sub{font-size:13px;line-height:18px;color:var(--label-3);margin-top:2px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;line-height:18px;
+  color:var(--accent);background:var(--surface);border:1px solid var(--separator);
+  border-radius:999px;padding:6px 12px;white-space:nowrap;cursor:pointer;flex:0 0 auto}
+.chip b{font-weight:600}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.chip.paid .dot{background:var(--warn)}
+
+.seg{display:flex;background:var(--fill);border-radius:10px;padding:2px;margin-bottom:16px;
+  overflow-x:auto;scrollbar-width:none}
+.seg::-webkit-scrollbar{display:none}
+.seg button{flex:1 0 auto;border:none;background:none;color:var(--label-2);
+  font-size:13px;line-height:18px;font-weight:600;padding:7px 12px;border-radius:8px;cursor:pointer;
+  white-space:nowrap;transition:background .15s,color .15s}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--label);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+/* R2.7 实时刷新状态条：极矮（24px），跟在 tab 行下方，不挤压 6 个 tab 布局 */
+.livebar{display:flex;align-items:center;gap:6px;margin:-8px 0 12px;padding:0 2px;
+  font-size:11px;line-height:16px;color:var(--label-3)}
+.liveDot{width:7px;height:7px;border-radius:50%;background:var(--label-3);flex:0 0 auto;transition:background .2s}
+.liveDot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+.liveText{flex:1 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.liveToggle{border:1px solid var(--separator);background:var(--surface);color:var(--label-2);
+  border-radius:999px;font-size:11px;line-height:16px;font-weight:600;padding:2px 9px;cursor:pointer;
+  white-space:nowrap;font-family:inherit;
+  display:inline-flex;align-items:center;gap:4px;min-height:22px}
+.liveToggle[aria-pressed="false"]{color:var(--label-3)}
+/* R2.28：图标按钮内 svg 与文字基线对齐、不收缩 */
+.liveToggle svg,.swPlayInline svg{flex:0 0 auto;display:block}
+/* R2.34：池占比迷你条——嵌在「全部」按钮内，绿色=免费池占比、灰=付费池。
+   小屏隐藏绝对数字后，比例条仍一眼可见（用户要看的是 free/paid 比例关系）。 */
+.sw-bar .swmix{display:inline-block;width:18px;height:5px;margin-left:5px;
+  vertical-align:middle;border-radius:3px;overflow:hidden;background:var(--separator)}
+.sw-bar .swmix i{display:block;height:100%;background:var(--ok,#0F6E56);border-radius:3px 0 0 3px}
+/* R2.32：范围 + 池过滤合并成一行——范围在前、池在后、播放按钮行尾。
+   窄屏（<500px）压缩 hseg 内边距与 label 间距，勉强塞进 375px；
+   实在放不下时横向滚动兜底（auto），绝不把按钮挤没或换行堆叠。 */
+.sw-bar{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow-x:auto;
+  -webkit-overflow-scrolling:touch;padding-bottom:2px}
+.sw-bar .hseg{flex:0 0 auto}
+.sw-bar .swrange-label{flex:0 0 auto;margin-right:0}
+.sw-bar .swPlayInline{flex:0 0 30px;margin-left:0}
+@media(max-width:500px){
+  .sw-bar{gap:4px}
+  .sw-bar .hseg button{padding:3px 5px;font-size:10px}
+  /* 手机端隐藏「范围」label 和池计数数字——按钮文案本身已表意，省下约 90px
+     让范围+池+播放按钮真正塞进 375px 一行（实测原需 413px > 366px 被裁）。 */
+  .sw-bar .swrange-label{display:none}
+  .sw-bar .swcnt{display:none}
+}
+/* R2.31：播放按钮恢复 R2.28 的圆形小圆钮样式（位置仍在范围行末尾，见 R2.30）。
+   R2.29/30 曾改成无框扁平款，用户嫌丑。回到圆形：1px 边框 + 圆角 50% + 浅阴影 +
+   30px 点击区，单色 SVG 图标不变（Apple HIG Icons：单色模板、统一线宽、足够点击区）。 */
+.swPlayInline{display:inline-flex;align-items:center;justify-content:center;
+  width:30px;height:30px;flex:0 0 30px;padding:0;cursor:pointer;
+  border:1px solid var(--separator);border-radius:50%;background:var(--surface);
+  color:var(--label-2);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.swPlayInline:hover{color:var(--accent);border-color:var(--accent)}
+.swPlayInline[aria-pressed="true"]{color:var(--accent);border-color:var(--accent)}
+/* R2.29：范围 label 纯文本，不被 .hseg 边框包成按钮样式 */
+.swrange-label{font-size:11px;color:var(--label-3);align-self:center;
+  margin-right:6px;white-space:nowrap}
+
+/* 搜索框（HIG Search Field：高 36、圆角 10、低调填充） */
+.search{position:relative;margin-bottom:10px}
+.search input{width:100%;height:36px;border:none;border-radius:10px;background:var(--fill);
+  color:var(--label);font-size:15px;padding:0 12px 0 32px;font-family:inherit;outline:none}
+.search input::placeholder{color:var(--label-3)}
+.search svg{position:absolute;left:9px;top:9px;width:16px;height:16px;fill:var(--label-3)}
+
+/* 筛选胶囊 */
+.filters{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.filters::-webkit-scrollbar{display:none}
+.fchip{flex:0 0 auto;font-size:13px;line-height:18px;font-weight:600;padding:6px 12px;border-radius:999px;
+  border:1px solid var(--separator);background:var(--surface);color:var(--label-2);cursor:pointer}
+.fchip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.group{margin-bottom:20px}
+.ghead{font-size:12px;line-height:16px;color:var(--label-3);font-weight:600;
+  text-transform:uppercase;letter-spacing:.5px;padding:0 4px 6px;display:flex;align-items:center;gap:6px}
+.ghead .count{font-weight:500;letter-spacing:0;text-transform:none}
+.card{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.card+.card{margin-top:10px}
+/* R1：长列表固定高度、内部滚动（用户反馈列表太长整页滚动很乱）。
+   规范来源：Apple HIG Lists and Tables（分区固定可视区 + 滚动）。
+   高度用 min(62vh,560px) 自适应，窄屏再收一档；细滚动条避免抢视觉。 */
+.scroll-list{max-height:min(62vh,560px);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--separator) transparent}
+.scroll-list::-webkit-scrollbar{width:6px;height:6px}
+.scroll-list::-webkit-scrollbar-thumb{background:var(--separator);border-radius:3px}
+@media (max-width:480px){.scroll-list{max-height:min(58vh,460px)}}
+/* 图表容器：固定高度 + 内部滚动，跟随主题（canvas 无法读 CSS 变量，颜色在 JS 里显式设） */
+.chart-box{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);
+  padding:12px;height:min(46vh,380px)}
+
+/* 分组头（可折叠） */
+.gh{display:flex;align-items:center;gap:8px;padding:10px 14px;min-height:44px;cursor:pointer;
+  border-bottom:1px solid var(--separator);background:var(--surface-2)}
+.gh:active{background:var(--fill)}
+.gh .t{font-size:13px;line-height:18px;font-weight:600;color:var(--label-2)}
+.gh .c{font-size:12px;line-height:16px;color:var(--label-3)}
+.gh .cv{margin-left:auto;color:var(--label-3);font-size:12px;transform:rotate(0deg);transition:transform .15s}
+.gh[aria-expanded="true"] .cv{transform:rotate(90deg)}
+
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:56px;
+  border-bottom:1px solid var(--separator);cursor:default}
+.row:last-child{border-bottom:none}
+.row.tap{cursor:pointer}
+.row.tap:active{background:var(--surface-2)}
+.rmain{flex:1 1 auto;min-width:0}
+.rtitle{font-size:15px;line-height:20px;font-weight:600;display:flex;align-items:center;gap:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rsub{font-size:12px;line-height:16px;color:var(--label-3);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rsub.wrap{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical}
+.rright{flex:0 0 auto;display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--label-2)}
+.mono{font-variant-numeric:tabular-nums}
+.row.active{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.tick{color:var(--accent);font-weight:700;font-size:16px;line-height:1}
+
+.pill{display:inline-block;font-size:11px;line-height:13px;font-weight:600;padding:3px 7px;border-radius:7px;white-space:nowrap}
+.pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.pill.err{color:var(--err);background:color-mix(in srgb,var(--err) 14%,transparent)}
+.pill.info{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.pill.plain{color:var(--label-2);background:var(--fill)}
+/* R2.6：真免费模型用暖橙 FREE 角标，和同名付费模型一眼可分。
+   付费方不额外加角标（避免列表噪音），靠「有/无 FREE」区分即可。 */
+.pill.free{color:#B45309;background:rgba(245,158,11,.16);margin-right:5px}
+.dotst{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
+.dotst.ok{background:var(--ok)} .dotst.err{background:var(--err)} .dotst.warn{background:var(--warn)}
+
+/* 平台前置标签（账号页 / 切换历史 / 请求列表共用）。
+   颜色来源 Apple HIG Color 系统色：
+   https://developer.apple.com/design/human-interface-guidelines/color
+   平台是品牌标识，深浅主题统一用固定实底（不随 --accent 变）——否则深色下
+   --accent 变浅蓝 #4DA3FF，白字对比度掉到 2.6:1，不合格。
+   WorkBuddy=蓝 #0A62C4（白字 5.6:1）、Qoder=紫 #8944AB（6.5:1）、mock=灰，
+   两者都 ≥4.5:1（WCAG AA 正文）。 */
+.ptag{display:inline-block;font-size:11px;line-height:13px;font-weight:700;padding:3px 7px;
+  border-radius:6px;background:#0A62C4;color:#fff;
+  white-space:nowrap;flex:0 0 auto}
+.ptag[data-plat="qoder"]{background:#8944AB;color:#fff}
+.ptag[data-plat="mock"],.ptag[data-plat="unknown"]{background:var(--fill);color:var(--label-2)}
+
+/* Qoder 账号行内的授权按钮（P44）。
+   规格来源：Material Design 3 — Buttons / text button
+   https://m3.material.io/components/buttons/guidelines
+   取值：label-large 14sp/20sp；shape corner small = 8dp
+   https://m3.material.io/styles/shape/overview-levels
+   min-width 44px 是 Apple HIG 的最小可点区域（44pt）
+   https://developer.apple.com/design/human-interface-guidelines/buttons
+   高度 32px：为了塞进 56px 的账号行；整行 .row.tap 本身也是可点的，
+   所以实际触控区域比按钮大。 */
+.qbtn{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  min-width:44px;height:32px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--separator);background:var(--fill);color:var(--accent);
+  font-size:14px;line-height:20px;font-weight:600;font-family:inherit;cursor:pointer;
+  white-space:nowrap}
+.qbtn:active{opacity:.7}
+.qbtn.pri{background:var(--accent);color:#fff;border-color:transparent}
+.qbtn[disabled]{opacity:.45;cursor:default}
+
+/* 指引 / 代码块 */
+.step{display:flex;gap:12px;padding:14px}
+.cfg{padding:14px}
+.cfg+.cfg{border-top:1px solid var(--separator)}
+.cfg h3{font-size:15px;line-height:20px;font-weight:600}
+.cfg p{font-size:13px;line-height:18px;color:var(--label-2);margin-top:2px;overflow-wrap:anywhere}
+.ghint{font-size:12px;line-height:17px;color:var(--label-3);padding:8px 14px;background:var(--surface-2);
+  border-bottom:1px solid var(--separator)}
+.step>div:last-child{flex:1 1 auto;min-width:0}
+.step+.step{border-top:1px solid var(--separator)}
+.num{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+  font-size:12px;line-height:22px;text-align:center;font-weight:700}
+.step h3{font-size:15px;line-height:20px;font-weight:600}
+.step p{font-size:13px;line-height:18px;color:var(--label-2);margin-top:2px;overflow-wrap:anywhere}
+.code{display:flex;flex-direction:column;margin-top:8px}
+pre{background:var(--surface-2);border:1px solid var(--separator);border-radius:10px;
+  padding:10px 12px;order:1;width:100%;overflow-x:auto;font-size:12px;line-height:17px;
+  white-space:pre-wrap;overflow-wrap:anywhere;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--label);
+  -webkit-user-select:all;user-select:all}
+code{font-family:inherit}
+.copy{align-self:flex-start;order:0;margin-bottom:6px;font-size:12px;line-height:16px;padding:5px 10px;
+  border-radius:8px;border:1px solid var(--separator);background:var(--surface);
+  color:var(--label-2);cursor:pointer;font-weight:600}
+.copy:active{background:var(--fill)}
+.copy.done{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.copyrow{display:flex;gap:8px;align-items:center;order:0;margin-bottom:6px}
+.copyrow .copy{align-self:center;margin:0}
+.toggle{font-size:12px;line-height:16px;padding:5px 10px;border-radius:8px;border:1px solid var(--separator);
+  background:var(--surface);color:var(--label-3);cursor:pointer}
+.note{font-size:12px;line-height:17px;color:var(--label-3);padding:0 4px 12px;margin-top:-10px}
+.note code{font-size:11px}
+
+.kvrow{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--separator)}
+.kvrow:last-child{border-bottom:none}
+.kvrow .k{font-size:13px;color:var(--label-2);flex:0 0 auto;width:72px}
+.kvrow .v{font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+.kvrow .aside{flex:0 0 auto;font-size:11px;color:var(--label-3);font-family:var(--mono,monospace)}
+
+/* 调度页：可拖拽的模型顺序列表 + 策略开关 */
+/* R2.8：禁止长按选中文字——手机端长按 handle 附近会误选模型名，干扰拖拽。
+   列表数据都在 data-* 里，复制配置走接入页，这里禁用文本选择不影响功能。 */
+.orderlist{display:flex;flex-direction:column;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.orderrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--separator);
+  background:var(--surface)}
+.orderrow:last-child{border-bottom:none}
+.orderrow.dragging{opacity:.35}
+.orderrow.over{box-shadow:inset 0 2px 0 var(--accent)}
+/* R2.5：模型列表默认折叠，只显示前 3 个；其余 .folded 隐藏，点展开按钮再显示。
+   展开后列表恢复可滚动（.scroll-list），收起时高度自然收缩。 */
+.orderrow.folded{display:none}
+.orderexpand{display:flex;align-items:center;justify-content:center;gap:6px;
+  padding:10px 12px;border-top:1px solid var(--separator);border:0;width:100%;
+  background:var(--surface-2);color:var(--accent);font:inherit;font-size:12px;line-height:16px;
+  cursor:pointer;-webkit-tap-highlight-color:transparent}
+.orderexpand:active{background:var(--fill)}
+/* 触摸拖拽：抬起的项加阴影，避免和滚动混淆 */
+.orderrow.touchdrag{opacity:.9;box-shadow:0 4px 14px rgba(0,0,0,.2);position:relative;z-index:2}
+.orderrow.off .omodel{color:var(--label-3);text-decoration:line-through}
+.handle{flex:0 0 auto;width:20px;text-align:center;color:var(--label-3);cursor:grab;font-size:14px;
+  line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}
+.orderrow .omodel{flex:1 1 auto;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 价格信息（P41）：要能收缩 + 省略，绝不能被挤出容器。
+   窄屏时（见下方媒体查询）整块换到第二行显示，不做横向滚动。 */
+.orderrow .ometa{flex:0 1 auto;min-width:0;max-width:46%;font-size:11px;color:var(--label-3);
+  font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orderrow .oact{flex:0 0 auto;display:flex;gap:4px;align-items:center}
+.orderrow .oact button{font-size:11px;line-height:14px;padding:3px 7px;border-radius:6px;
+  border:1px solid var(--separator);background:transparent;color:var(--label-2);cursor:pointer}
+.orderrow .oact button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.orderrow .oact .mv{padding:3px 6px;font-family:var(--mono,monospace)}
+.srow{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--separator)}
+.srow:last-child{border-bottom:none}
+.srow .sk{flex:1 1 auto;min-width:0;font-size:13px}
+.srow .sk small{display:block;font-size:11px;color:var(--label-3);margin-top:2px}
+.srow .sv{flex:0 0 auto;display:flex;gap:6px;align-items:center}
+.tgl{font-size:11px;font-weight:600;padding:4px 9px;border-radius:8px;border:1px solid var(--separator);
+  background:transparent;color:var(--label-2);cursor:pointer;white-space:nowrap}
+.tgl[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 下拉选择（手动指定模型）：与后台其它控件同一套边框/圆角/字号 */
+.srow select{font-size:13px;line-height:18px;padding:5px 8px;border-radius:8px;
+  border:1px solid var(--separator);background:var(--surface-2,var(--surface));color:var(--label-1);
+  cursor:pointer;max-width:220px}
+/* 手动指定的模型：左侧一条强调色竖条，和「已停用」的划线区分开 */
+.orderrow.manual{box-shadow:inset 3px 0 0 var(--accent)}
+.orderrow.manual .omodel{font-weight:600}
+.tgl.warn[aria-pressed="true"]{background:var(--warn,#b45309);border-color:var(--warn,#b45309)}
+.selgrp{display:flex;gap:6px}
+.selgrp button{font-size:12px;padding:6px 12px;border-radius:9px;border:1px solid var(--separator);
+  background:transparent;color:var(--label-2);cursor:pointer}
+.selgrp button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.kvrow .mini{flex:0 0 auto;font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--separator);
+  background:var(--surface);color:var(--label-2);cursor:pointer}
+
+/* 测试结果 */
+.testbox{margin-top:10px;border-radius:12px;padding:12px;background:var(--surface-2);
+  border:1px solid var(--separator);font-size:13px;line-height:19px}
+.testbox.ok{border-color:color-mix(in srgb,var(--ok) 40%,var(--separator))}
+.testbox.err{border-color:color-mix(in srgb,var(--err) 40%,var(--separator))}
+.testbox b{font-weight:600}
+.testbox .reply{font-size:15px;line-height:21px;margin:6px 0 8px;color:var(--label);white-space:pre-wrap}
+.testbox .meta{color:var(--label-3);font-size:12px;line-height:17px}
+.btn{display:block;width:100%;min-height:44px;border:none;border-radius:12px;background:var(--accent);
+  color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer}
+.btn:active{opacity:.85}
+.btn[disabled]{opacity:.5;cursor:default}
+.btn.secondary{background:var(--fill);color:var(--label)}
+/* 次要按钮：描边样式，用于「发登录链接」这类不比主操作重要的动作；
+   a.btn 也走这里，所以补上和按钮一致的居中与去下划线 */
+.btn.sec{background:transparent;color:var(--accent);border:1px solid var(--accent);margin-top:10px}
+a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none}
+.loader{display:inline-flex;align-items:center;gap:8px;color:var(--label-3);font-size:13px}
+
+.empty{padding:28px 16px;text-align:center;color:var(--label-3);font-size:15px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--separator);
+  border-top-color:var(--accent);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
+@keyframes s{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(12px);
+  background:var(--label);color:var(--bg);font-size:13px;line-height:18px;padding:8px 14px;
+  border-radius:999px;opacity:0;pointer-events:none;transition:.2s;z-index:60;max-width:80vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* iOS Alert：宽 270pt、圆角 14、按钮 44 高、非全屏遮罩 */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;
+  justify-content:center;padding:24px;z-index:70;opacity:0;pointer-events:none;transition:opacity .18s}
+.overlay.show{opacity:1;pointer-events:auto}
+.alert{width:270px;max-width:100%;background:var(--surface);border-radius:14px;overflow:hidden;
+  /* 矮视口（手机横屏 / 笔记本 200% 缩放）下弹窗会比视口高，overflow:hidden 会把
+     底部连同按钮一起裁掉；这里限高且允许内部滚动，保证内容永远可达。 */
+  max-height:calc(100dvh - 48px);overflow-y:auto;overscroll-behavior:contain;
+  transform:scale(.96);transition:transform .18s;box-shadow:0 18px 50px rgba(0,0,0,.28)}
+.overlay.show .alert{transform:scale(1)}
+.alert .head{padding:18px 16px 14px;text-align:center}
+.alert h2{font-size:17px;line-height:22px;font-weight:600}
+.alert .msg{font-size:13px;line-height:18px;color:var(--label-2);margin-top:4px;overflow-wrap:anywhere}
+.alert .rows{padding:0 16px 14px}
+.alert .arow{display:flex;justify-content:space-between;gap:12px;font-size:13px;line-height:18px;
+  padding:3px 0;color:var(--label-3)}
+.alert .arow b{color:var(--label);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62%}
+.alert .warnline{margin:0 16px 14px;font-size:12px;line-height:17px;color:var(--err);
+  background:color-mix(in srgb,var(--err) 10%,transparent);border-radius:8px;padding:8px 10px}
+.alert .acts{display:flex;border-top:1px solid var(--separator);
+  /* 弹窗内容超过视口时需要滚动，按钮钉在底部才不会跟着滚走 */
+  position:sticky;bottom:0;background:var(--surface);z-index:1}
+.alert .acts button{flex:1 1 0;min-height:44px;border:none;background:var(--surface);color:var(--accent);
+  font-size:17px;font-family:inherit;cursor:pointer}
+.alert .acts button+button{border-left:1px solid var(--separator)}
+.alert .acts button.danger{color:var(--err);font-weight:600}
+.alert .acts button.primary{font-weight:600}
+
+
+/* ---------- 账号展开详情（P18） ---------- */
+.detail{background:var(--surface-2);border-bottom:1px solid var(--separator);padding:12px 14px 14px}
+.detail:last-child{border-bottom:none}
+.bar{height:6px;border-radius:3px;background:var(--fill);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.barx{display:flex;justify-content:space-between;font-size:11px;line-height:14px;color:var(--label-3);
+  margin:5px 0 8px;font-variant-numeric:tabular-nums}
+.kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;line-height:18px;
+  padding:3px 0;color:var(--label-3)}
+.kv b{color:var(--label);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:64%}
+.sub2{font-size:11px;line-height:14px;color:var(--label-3);font-weight:600;letter-spacing:.4px;
+  text-transform:uppercase;margin:12px 0 6px}
+.spark{display:flex;align-items:flex-end;gap:4px;height:38px}
+.spark>span{flex:1 1 0;background:color-mix(in srgb,var(--accent) 40%,transparent);
+  border-radius:3px 3px 0 0;min-width:4px}
+.sparkempty{font-size:12px;line-height:17px;color:var(--label-3);padding:8px 0}
+.sparkx{display:flex;justify-content:space-between;font-size:10px;line-height:13px;
+  color:var(--label-3);margin-top:3px}
+.bal{font-size:15px;line-height:20px;font-weight:600;color:var(--label);font-variant-numeric:tabular-nums}
+.bal i{font-style:normal;font-size:11px;line-height:13px;font-weight:500;color:var(--label-3);margin-left:3px}
+.cv{color:var(--label-3);font-size:10px;transition:transform .15s;display:inline-block}
+.cv.open{transform:rotate(90deg)}
+.plus{font-size:20px;line-height:20px;color:var(--accent);font-weight:400}
+
+/* ---------- 用量明细（P27） ---------- */
+/* 「今日消耗」是展开后第一眼要看的东西，所以给到 23px/600；
+   平台账单口径与网关请求口径分两块写，避免两个不同来源的数字混在一起。 */
+.ustat{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:8px 0 0}
+.ustat .u1 b{font-size:23px;line-height:27px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--label)}
+.ustat .u1 b.zero{color:var(--label-2)}
+.ustat .u1 em{font-style:normal;font-size:12px;line-height:16px;color:var(--label-3);margin-left:5px}
+.ustat .u2{font-size:11px;line-height:15px;color:var(--label-3);text-align:right;flex:0 0 auto;max-width:52%}
+.udays{display:flex;gap:4px;overflow-x:auto;padding:8px 0 0;scrollbar-width:none}
+.udays::-webkit-scrollbar{display:none}
+.udays button{flex:0 0 auto;font:inherit;font-size:11px;line-height:15px;padding:4px 7px;border-radius:7px;
+  border:1px solid var(--separator);background:var(--surface-2);color:var(--label-2);cursor:pointer}
+.udays button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+/* P48 图表控件：segmented control，Apple HIG 11/13 caption，选中态用强调色 */
+.hctl{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.hseg{display:inline-flex;border:1px solid var(--separator);border-radius:7px;overflow:hidden}
+.hseg button{font:inherit;font-size:11px;line-height:15px;padding:3px 8px;border:0;border-right:1px solid var(--separator);
+  background:var(--surface-2);color:var(--label-2);cursor:pointer}
+.hseg button:last-child{border-right:0}
+.hseg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.hwarn{color:var(--warn,#BA7517)}
+/* 峰值标注：Apple HIG caption1 12/16；数值用强调色，不抢正文 */
+.hpeak{font-size:12px;line-height:16px;color:var(--label-2);margin-top:8px}
+.hpeak b{color:var(--accent)}
+/* 峰值柱的小色点：取代原来压在文字行上的柱顶数值标签 */
+.hpeak .pkdot{display:inline-block;width:7px;height:7px;border-radius:2px;
+  background:var(--accent);margin-left:6px;vertical-align:middle}
+.hbars button{position:relative}
+/* R2.2：峰值数值标在峰值「柱顶」/「折线点旁」。
+   柱顶标签 bottom:100% 向上伸进预留的 20px 顶部空间，
+   与上面的读数行（.hpeak）分行，不再重叠。窄屏自动缩短、ewige 峰值才标。 */
+.hbarpk{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);white-space:nowrap;
+  font-size:11px;line-height:14px;font-weight:700;color:var(--accent);pointer-events:none}
+.hlinepk{position:absolute;transform:translate(-50%,-125%);white-space:nowrap;pointer-events:none;
+  font-size:11px;line-height:14px;font-weight:700;color:var(--accent);
+  padding:0 3px;border-radius:3px;background:var(--surface)}
+.hline svg circle.pk{fill:var(--accent);stroke:var(--surface);stroke-width:1.5}
+.hline{position:relative;height:54px;margin-top:22px}
+.hline svg{width:100%;height:54px;display:block;overflow:visible}
+.hline svg circle{fill:var(--accent);stroke:var(--surface);stroke-width:1}
+.hlinehit{position:absolute;inset:0;display:flex;gap:2px}
+.hlinehit button{flex:1 1 0;height:100%;padding:0;border:0;background:none;cursor:pointer;
+  position:relative}
+.hlinehit button:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+/* R2.23：折线选中态只保留淡底高亮；竖线已去掉（用户反馈中间那条竖线多余）。 */
+.hlinehit button[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.hbars{display:flex;align-items:flex-end;gap:2px;height:54px;margin-top:22px}
+.hbars button{flex:1 1 0;min-width:0;height:100%;padding:0;border:0;background:none;cursor:pointer;
+  display:flex;align-items:flex-end}
+.hbars button>i{display:block;width:100%;min-height:2px;border-radius:2px 2px 0 0;
+  background:color-mix(in srgb,var(--accent) 32%,transparent);transition:background .12s}
+.hbars button[aria-pressed="true"]>i{background:var(--accent)}
+.hbars button.haserr>i{background:color-mix(in srgb,var(--err) 50%,transparent)}
+.hbars button[aria-pressed="true"].haserr>i{background:var(--err)}
+.hx{display:flex;justify-content:space-between;font-size:10px;line-height:13px;color:var(--label-3);margin-top:3px}
+.hsum{font-size:12px;line-height:17px;color:var(--label-2);margin-top:6px}
+/* R1.1：low/high 叠加配色。high 固定品牌紫（与 Qoder 角标同色系），
+   low 用强调色；深浅色主题下都保证与背景对比度。 */
+:root{--purple:#8944AB}
+.hline svg circle.m-low{fill:var(--accent)}
+.hline svg circle.m-high{fill:var(--purple)}
+.hbars button>i.seg-low{background:color-mix(in srgb,var(--accent) 40%,transparent);border-radius:2px 2px 0 0}
+.hbars button>i.seg-high{background:var(--purple);border-radius:0}
+.hbars button.stacked[aria-pressed="true"]>i.seg-low{background:var(--accent)}
+/* 峰值柱：与上方 .pkdot 呼应，堆叠/单柱都高亮成主色 */
+.hbars button.pk>i.seg-low{background:var(--accent)}
+.hlegend{display:flex;gap:14px;justify-content:flex-end;font-size:11px;line-height:15px;color:var(--label-2);margin-top:3px}
+.hlegend span{display:inline-flex;align-items:center;gap:4px}
+.hlegend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.mtag{display:inline-block;font-size:9px;line-height:12px;padding:0 4px;margin-right:5px;border-radius:3px;
+  font-weight:700;vertical-align:1px}
+.mtag.low{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.mtag.high{background:color-mix(in srgb,var(--purple) 22%,transparent);color:var(--purple)}
+/* FREE 角标：账号行标题后，表示当前该账号有免费模型可蹭。绿色系，与 ok pill 一致。 */
+.freebadge{display:inline-block;margin-left:6px;padding:0 5px;font-size:9px;line-height:14px;
+  border-radius:4px;font-weight:800;letter-spacing:.4px;
+  background:color-mix(in srgb,var(--ok,#0F6E56) 16%,transparent);color:var(--ok,#0F6E56);
+  vertical-align:1px}
+/* R1.1：免费池健康度条。进度 = 可用免费组合/总候选，颜色随风险变化。 */
+.freebar{padding:12px 14px}
+.fbhead{display:flex;align-items:baseline;justify-content:space-between;font-size:14px;line-height:20px}
+.fbhead b{font-weight:700}
+.fbnum{font-size:12px;color:var(--label-2)}
+.fbtrack{height:7px;border-radius:4px;background:var(--fill);overflow:hidden;margin:8px 0}
+.fbtrack i{display:block;height:100%;border-radius:4px;background:var(--ok,#0F6E56);transition:width .3s}
+.freebar[data-level="mid"] .fbtrack i{background:var(--warn,#BA7517)}
+.freebar[data-level="low"] .fbtrack i{background:#E07B39}
+.freebar[data-level="empty"] .fbtrack i{background:var(--err)}
+.fbsub{font-size:12px;line-height:17px;color:var(--label-2);margin-top:2px}
+.fbnote{font-size:11px;line-height:15px;color:var(--label-3);margin-top:6px}
+/* P48 调度切换段：Apple HIG footnote 13/18、caption1 12/16 */
+.swrow{padding:9px 12px;border-bottom:1px solid var(--fill)}
+.swrow:last-child{border-bottom:0}
+.swmain{min-width:0}
+.swtitle{font-size:13px;line-height:18px;color:var(--label);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.swtitle b{font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.swfrom{font-size:12px;line-height:16px;color:var(--label-3)}
+.swfrom .ptag{vertical-align:middle}
+.swfirst{font-size:12px;line-height:16px;color:var(--label-3)}
+.swsub{font-size:12px;line-height:16px;color:var(--label-2);margin-top:2px}
+.swreason{font-size:11px;line-height:15px;color:var(--label-3);margin-top:2px;overflow-wrap:anywhere}
+/* 调度切换图表控件行：播放按钮 + 段计数 + 当前段说明 */
+.sw-controls{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.sw-controls .btn{font-size:12px;line-height:16px;padding:4px 10px}
+/* R2.27：时间轴说明行——desc 很长，原来和「第 N/300 段」挤一行读不清。
+   让它独占整行（flex-basis:100%），文本允许折行；step 用等宽数字。 */
+#swStep{font-variant-numeric:tabular-nums;font-weight:600}
+#swDesc{flex-basis:100%;line-height:1.5;overflow-wrap:anywhere}
+@media (max-width:480px){.sw-controls{gap:8px}}
+/* R1.3：免费/付费过滤行 + 折叠提示 + tier 徽章。
+   颜色固定（不随主题变），对比度按 WCAG AA 校过：#1D7A34 on #E4F5EA = 4.9:1 */
+#swFilter{display:inline-flex;border:1px solid var(--separator);border-radius:7px;overflow:hidden}
+#swFilter button{font:inherit;font-size:11px;line-height:15px;padding:3px 8px;border:0;border-right:1px solid var(--separator);
+  background:transparent;color:var(--label-2);cursor:pointer}
+#swFilter button:last-child{border-right:0}
+#swFilter button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.sw-fold-hint{font-size:12px;line-height:17px;color:var(--label-2);background:var(--fill);
+  border-radius:8px;padding:6px 10px;margin-bottom:8px}
+.swtier{font-size:10px;line-height:13px;padding:1px 6px;border-radius:6px;font-weight:500;flex:none}
+/* R1.5 最近使用模型列表：low/high 徽章（固定色，对比度 ≥4.5:1） */
+.sw-mode-pill{display:inline-flex;align-items:center;font-size:10px;line-height:14px;font-weight:600;
+  padding:1px 6px;border-radius:6px;flex:none;letter-spacing:.02em}
+.sw-mode-pill.m-low{background:#E4F5EA;color:#1D7A34}
+.sw-mode-pill.m-high{background:#FCE9E7;color:#B3261E}
+:root[data-theme="dark"] .sw-mode-pill.m-low{background:#123A22;color:#7EE2A0}
+:root[data-theme="dark"] .sw-mode-pill.m-high{background:#3E1614;color:#FF9B94}
+/* R1.6 最近使用列表：左侧平台·模型名，右侧数据汇总（对齐 Apple HIG Lists 行布局） */
+.swrecent-head{display:flex;gap:8px;align-items:center;padding:8px 12px;flex-wrap:wrap;
+  border-bottom:1px solid var(--separator);font-size:12px;color:var(--label-2)}
+/* R2.26：账号名智能两态——基础态 = 账号名完整 + 允许换行（"实在放不下就换行，
+   此时账号名不缩略"）；JS 测量后给塞得下的行加 .rc-shrink = 账号名省略号 + 强制单行
+   （"尽量显示在一行，账号名可缩略"）。判据见 fitRecentRows()。 */
+.swrecent-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;
+  padding:8px 12px;border-bottom:1px solid var(--fill)}
+.swrecent-row.rc-shrink{flex-wrap:nowrap;gap:4px 8px}
+.swrecent-row:last-child{border-bottom:0}
+.swrecent-name{display:flex;align-items:center;gap:7px;flex:0 1 auto;min-width:0}
+.swrecent-row.rc-shrink .swrecent-name{flex:1 1 auto;min-width:0;gap:5px}
+.swrecent-name b{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* R2.24：模型名颜色区分 low/high（去掉行内 high 徽章，顶部已有汇总标签）。
+   复用 sw-mode-pill 的同款文字色，浅色/深色主题对比度 ≥4.5:1。 */
+.swrecent-name b.m-high{color:#B3261E}
+.swrecent-name b.m-low{color:#1D7A34}
+:root[data-theme="dark"] .swrecent-name b.m-high{color:#FF9B94}
+:root[data-theme="dark"] .swrecent-name b.m-low{color:#7EE2A0}
+/* R2.19：最近使用列表的账号名（掩码），弱于平台色、强于统计小字 */
+.swrecent-acct{font-size:12px;color:var(--label-2);white-space:nowrap;
+  max-width:96px;overflow:hidden;text-overflow:ellipsis}
+/* 基础态账号名不缩略（完整显示，配合换行）；rc-shrink 态才省略号塞一行 */
+.swrecent-row:not(.rc-shrink) .swrecent-acct{max-width:none;overflow:visible}
+.swrecent-stat{display:flex;align-items:center;gap:8px;flex:0 1 auto;margin-left:auto;
+  font-size:11px;color:var(--label-3);flex-wrap:wrap;justify-content:flex-end}
+.swrecent-row.rc-shrink .swrecent-stat{flex:none;margin-left:0;gap:6px;flex-wrap:nowrap}
+.swrecent-stat>b{font-size:12px;color:var(--label-2);font-weight:600;white-space:nowrap}
+.swrecent-split{white-space:nowrap}
+.swrecent-time{white-space:nowrap;font-variant-numeric:tabular-nums}
+.swtier.t-free{background:#E4F5EA;color:#1D7A34}
+.swtier.t-paid{background:#FCE9E7;color:#B3261E}
+.swtier.t-mixed{background:#FFF3E0;color:#8A5A00}
+.swtier.t-unknown{background:var(--fill);color:var(--label-3)}
+.hlist{margin-top:2px}
+/* R2.3：小时明细行——状态改用色点（不再写 success/error 文本），补平台角标+账号掩码。
+   两行 flex：色点+时间+角标+账号+模型为一行，数值右对齐；窄屏 meta 自动换行不溢出。 */
+.hitem{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;padding:6px 0;border-bottom:1px solid var(--fill)}
+.hitem:last-child{border-bottom:0}
+.hitem .sdot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.hitem[data-st="error"] .sdot,.hitem[data-st="cancelled"] .sdot{background:var(--err)}
+.hitem[data-st="pending"] .sdot{background:var(--warn)}
+.hitem .t{font-size:11px;line-height:15px;color:var(--label-3);font-variant-numeric:tabular-nums;flex:0 0 42px}
+.hitem .meta{display:flex;align-items:center;gap:6px;flex:1 1 120px;min-width:0}
+.hitem .meta .ptag{font-size:10px;line-height:12px;padding:1px 5px}
+.hitem .acct{font-size:11px;line-height:15px;color:var(--label-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hitem .m{font-size:12px;line-height:16px;color:var(--label);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.hitem .n{font-size:11px;line-height:15px;color:var(--label-3);font-variant-numeric:tabular-nums;
+  flex:0 0 auto;margin-left:auto}
+/* 底部颜色图例：说明色点含义，避免用文字标状态 */
+.hlegend-st{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;
+  font-size:11px;line-height:16px;color:var(--label-3)}
+.hlegend-st span{display:inline-flex;align-items:center;gap:5px}
+.hlegend-st i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.mdl{display:flex;align-items:center;gap:8px;padding:4px 0}
+.mdl .nm{font-size:12px;line-height:16px;color:var(--label);flex:1 1 auto;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.mdl .ct{font-size:11px;line-height:15px;color:var(--label-3);font-variant-numeric:tabular-nums;flex:0 0 auto}
+.mdl .bw{flex:0 0 56px;height:4px;border-radius:2px;background:var(--fill);overflow:hidden}
+.mdl .bw i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.uload{font-size:12px;line-height:17px;color:var(--label-3);padding:7px 0}
+/* R1.6：全账号汇总卡片内部留白，避免内容贴边（尤其手机端）。
+   规范：Apple HIG Layout——分组内容统一 16pt 边距；窄屏降到 12pt。 */
+.uh-summary-card{padding:14px 14px 12px}
+@media (max-width:480px){.uh-summary-card{padding:12px 12px 10px}}
+.ulegend{font-size:11px;line-height:16px;color:var(--label-3);margin-top:6px}
+/* R2.23：展开/收起按钮——倒三角图标 + 文案融合，和 hsum 文案同一行，不再是独立丑按钮。 */
+/* R2.24：展开/收起按钮在图例行行尾（margin-left:auto），倒三角图标融进文案。 */
+.hmore{border:0;background:none;color:var(--accent);padding:0;cursor:pointer;
+  font-size:11px;line-height:16px;margin-left:auto;white-space:nowrap}
+.hmore:hover{text-decoration:underline}
+.hmore .caret{display:inline-block;font-size:9px;transition:transform .15s;margin-left:3px}
+.hmore[aria-expanded="true"] .caret{transform:rotate(180deg)}
+/* R2.23：「最新」标签内联在明细文案行前，只有默认最新小时才加。 */
+.latest-tag{font-size:10px;font-weight:600;color:#1D7A34;background:#E4F5EA;
+  padding:1px 6px;border-radius:6px;margin-right:6px;vertical-align:middle}
+:root[data-theme="dark"] .latest-tag{background:#123A22;color:#7EE2A0}
+/* P29：账单口径 vs 网关口径的解释块。用户主动问「是不是要加个差额说明」——
+   差额不能算成一个数（网关侧大部分请求拿不到扣费），所以这里只讲成分。 */
+.gapnote{font-size:11.5px;line-height:18px;color:var(--label-2);margin-top:6px;
+  padding:8px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--separator)}
+.gapnote b{color:var(--label);font-weight:600}
+
+/* ---------- 添加账号弹窗 ---------- */
+.alert.wide{width:min(440px,100%)}
+/* 扫码 / 粘贴 两段式：扫码是默认，符合「手机上最省事的一条路」 */
+.imptabs{display:flex;gap:6px;padding:0 16px 12px}
+.imptabs button{flex:1;font:inherit;font-size:13px;line-height:18px;padding:7px 10px;border-radius:9px;
+  border:1px solid var(--separator);background:var(--surface-2);color:var(--label-2);cursor:pointer}
+.imptabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 平台选择（WorkBuddy / Qoder）：这是**更上一级**的维度 —— 每个平台的
+   登录方式完全不一样（WorkBuddy 扫 .info，Qoder 扫设备码），
+   混在一个 tab 组里会让人以为「二维码搞混了」（用户原话）。 */
+.plattabs{display:flex;gap:6px;padding:0 16px 12px}
+.plattabs button{flex:1;font:inherit;font-size:13.5px;line-height:19px;font-weight:600;padding:9px 10px;
+  border-radius:10px;border:1px solid var(--separator);background:var(--surface-2);color:var(--label-2);cursor:pointer}
+.plattabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.platnote{font-size:12px;line-height:17px;color:var(--label-3);padding:0 16px 10px}
+/* 平台差异说明块：讲清「接入方式」和「额度来源」是两件事，避免把
+   扫码后余额 0 误读成扫码失败或网关 bug。信息蓝底，深浅主题都可读。 */
+.platinfo{margin:0 16px 12px;padding:10px 12px;border-radius:10px;
+  background:var(--surface-2);border:1px solid var(--separator);
+  font-size:12px;line-height:18px;color:var(--label-2)}
+.platinfo b{color:var(--label);font-weight:600}
+.platinfo .pi-row{display:flex;gap:6px}
+.platinfo .pi-k{flex:none;color:var(--label-3);font-weight:600}
+.platinfo .pi-warn{color:var(--warn,#B45309)}
+.platinfo .pi-ok{color:var(--ok,#1A7F37)}
+/* 积分数字是用户最关心的信息，红色醒目（浅色深红/深色亮红，都有足够对比度） */
+.platinfo .pi-hot{color:var(--err,#C62828);font-weight:700}
+.qrbox{display:flex;flex-direction:column;align-items:center;gap:8px;padding:2px 16px 8px}
+/* 二维码固定白底黑模块：识别依赖对比度，绝不能跟着深色主题反色。
+   flex:none 是关键——父级 .qrbox 是纵向 flex，默认 flex-shrink:1 会在
+   矮视口把二维码压扁（压扁=扫不出来），这里禁止它被压缩。 */
+.qrbox .qr{flex:none;width:200px;height:200px;aspect-ratio:1/1;background:#fff;border-radius:12px;padding:8px;
+  border:1px solid var(--separator);box-shadow:var(--shadow)}
+/* 后端返回的 SVG 带 viewBox，100% 即等比缩放；缺 viewBox 时会被裁切（见 qrlogin._with_viewbox） */
+.qrbox .qr svg{width:100%;height:100%;display:block}
+.qrtip{font-size:12px;line-height:17px;color:var(--label-3);text-align:center;max-width:300px}
+.qrbox .btn{margin-top:2px}
+.imp{padding:0 16px 14px}
+.imp textarea{width:100%;height:132px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11.5px;line-height:16px;padding:10px;border-radius:10px;border:1px solid var(--separator);
+  background:var(--surface-2);color:var(--label);outline:none;overflow-wrap:anywhere}
+.imp textarea:focus{border-color:var(--accent)}
+.improw{display:flex;align-items:center;gap:8px;margin-top:8px}
+.filebtn{font-size:13px;line-height:18px;color:var(--accent);cursor:pointer;white-space:nowrap}
+.impname{font-size:12px;line-height:16px;color:var(--label-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 通用输入弹窗（P20：改找回邮箱） */
+.field{padding:0 16px 14px}
+.field label{display:block;font-size:12px;line-height:16px;color:var(--label-3);margin-bottom:6px}
+.field input{width:100%;height:40px;padding:0 11px;font-size:15px;font-family:inherit;
+  border:1px solid var(--separator);border-radius:9px;background:var(--bg);color:var(--label)}
+.field input:focus{outline:none;border-color:var(--accent)}
+.field .err{margin-top:8px;font-size:12px;line-height:17px;color:var(--err);min-height:0}
+.hintline{font-size:11px;line-height:16px;color:var(--label-3);margin-top:6px}.err{font-size:12px;line-height:17px;color:var(--err);margin-top:8px;overflow-wrap:anywhere}
+
+@media (max-width:640px){
+  .wrap{padding:12px 12px 0}
+  .row{min-height:54px;padding:10px 12px}
+  .kvrow .k{width:64px}
+  pre{font-size:11.5px}
+  /* P41：模型行在窄屏换行——价格信息落到第二行，不横向溢出也不截字 */
+  .orderrow{flex-wrap:wrap;row-gap:4px;padding:9px 10px}
+  .orderrow .omodel{flex:1 1 auto}
+  /* R2.37：high 行徽标多（平台+high#N+次数+纯聊天）时，让操作按钮保持右上角、
+     和模型名同一行；徽标在 omodel 内换行，不把「启用」按钮挤到下一行掉位。 */
+  #highlist .orderrow .oact{margin-left:auto;align-self:flex-start}
+  #highlist .orderrow .omodel{white-space:nowrap}
+  #highlist .orderrow .hminor{display:none}   /* 窄屏次要徽标让位给操作按钮 */
+  /* R2.5：flex-basis 100% + margin-left 30px 会超出容器 30px，导致 scroll-list
+     内部能左右滑。改成 calc 扣掉缩进，并允许收缩，手机端彻底不横向溢出。 */
+  .orderrow .ometa{flex:1 1 calc(100% - 30px);max-width:calc(100% - 30px);order:3;margin-left:30px;
+    overflow:visible;white-space:normal;overflow-wrap:anywhere}
+  /* P49：设置项在窄屏改成上下堆叠。
+     原来左右两栏固定分列，右侧一长（「19:43:17 · 每日签到：9 个账号…」）
+     就会把左侧标签压成竖排（一个字一行），同时右侧自己溢出屏幕。 */
+  .srow{flex-direction:column;align-items:flex-start;gap:5px}
+  .srow .sk{flex:1 1 auto;width:100%}
+  .srow .sv{flex:1 1 auto;max-width:100%;flex-wrap:wrap;overflow-wrap:anywhere}
+  .srow .sv select{max-width:100%}
+  /* R2.26：窄屏两态——基础态允许换行且账号名完整不缩略；rc-shrink 态由 JS
+     测量后加类，账号名省略号 + 强制单行。判据 fitRecentRows() 对所有视口一致。 */
+  .swrecent-row{padding:8px 10px;gap:4px 8px}
+  .swrecent-acct{font-size:11px}
+  .swrecent-row.rc-shrink .swrecent-acct{max-width:88px}
+  .swrecent-name b{font-size:12px}
+  .swrecent-stat{font-size:10px;gap:6px}
+  .swrecent-stat>b{font-size:11px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>模型网关</h1>
+      <div class="sub" id="topSub">low · 网关</div>
+    </div>
+    <button class="chip" id="chip" title="切换模型"><span class="dot"></span><b id="chipModel">—</b></button>
+  </div>
+
+  <div class="seg" role="tablist" id="seg">
+    <button role="tab" aria-selected="true" data-p="models">模型</button>
+    <button role="tab" aria-selected="false" data-p="accounts">账号</button>
+    <button role="tab" aria-selected="false" data-p="guide">接入</button>
+    <button role="tab" aria-selected="false" data-p="requests">记录</button>
+    <button role="tab" aria-selected="false" data-p="routes">路由</button>
+    <button role="tab" aria-selected="false" data-p="security">安全</button>
+  </div>
+
+  <!-- R2.7 实时刷新：一行极小状态条，告诉用户数据是否在自动刷新，可一键暂停/恢复 -->
+  <div class="livebar"><span class="liveDot" id="liveDot"></span>
+    <span class="liveText" id="liveText">实时刷新已开</span>
+    <button class="liveToggle" id="liveToggle" aria-pressed="true"></button></div>
+
+  <div id="body"><div class="empty"><span class="spin"></span> 加载中…</div></div>
+  </div>
+<div class="toast" id="toast"></div>
+<div class="overlay" id="overlay"><div class="alert" id="alert"></div></div>
+
+<!-- R1：ECharts 本地化（admin/vendor/），不依赖外网 CDN——服务器断网图也不空白。
+     src 用 "admin/vendor/..." 而不是 "vendor/..."：页面 URL 是 /admin（无尾斜杠），
+     相对路径会拿最后一段当目录，"vendor/x" 会解析到 /vendor/x（404），
+     "admin/vendor/x" 则正确解析成 /admin/vendor/x（带 /gw 前缀时是 /gw/admin/vendor/x，
+     两种部署都不用硬编码前缀）。 -->
+<script src="admin/vendor/echarts.min.js"></script>
+<script>
+/* 禁止双击/双指放大（第三道兜底，专治 iOS Safari：
+   - 它忽略 viewport 的 user-scalable=no；
+   - gesturestart 是 Safari 私有的双指缩放事件，可 preventDefault 掐掉；
+   - dblclick 兜住桌面端双击选中/放大。
+   CSS touch-action:pan-x pan-y 负责现代浏览器，这里是老 Safari 的保险。 */
+document.addEventListener("gesturestart", e=>e.preventDefault(), {passive:false});
+document.addEventListener("gesturechange", e=>e.preventDefault(), {passive:false});
+document.addEventListener("dblclick", e=>e.preventDefault(), {passive:false});
+/* 鉴权（P17）：页面里没有、也不许有访问口令。口令只在登录页用一次，
+   之后靠 HttpOnly + SameSite=Lax 的会话 cookie 自动携带——JS 读不到，XSS 也偷不走；
+   地址栏只剩 /admin，不会再出现 ?token=。
+   支持子路径部署（nginx /gw/ → 127.0.0.1:8080）：前缀从 location.pathname 推断。 */
+const QS=new URLSearchParams(location.search);
+const PREFIX=(location.pathname.match(/^(.*?)\/admin\/?$/)||[,""])[1];
+const API=p=>PREFIX+"/admin/api/"+p;
+const LOGIN=PREFIX+"/admin";
+(function(){const t=QS.get("theme");
+  if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);})();
+
+const esc=s=>String(s??"—").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtTime=t=>t?new Date(t*1000).toLocaleString("zh-CN",{hour12:false}):"—";
+const fmtShort=t=>t?new Date(t*1000).toLocaleTimeString("zh-CN",{hour12:false}):"—";
+const fmtMD=t=>{const d=new Date(t*1000);const p=n=>String(n).padStart(2,"0");
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;};
+/* R2.25：最近使用列表的时间——今天只显「时:分」，跨天才带日期。
+   窄屏省一大截宽度，避免右侧汇总掉到第二行。 */
+const fmtRecent=t=>{const d=new Date(t*1000),now=new Date(),p=n=>String(n).padStart(2,"0");
+  const today=d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate();
+  return today?`${p(d.getHours())}:${p(d.getMinutes())}`
+              :`${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;};
+const pill=(t,k)=>`<span class="pill ${k}">${esc(t)}</span>`;
+const num=v=>Number(v).toLocaleString("zh-CN",{maximumFractionDigits:2});
+/* R2.28：单色 SVG 图标（替代 ⏱/⏸/▶ emoji 码点——它们在部分系统字体下渲染成
+   彩色表情包）。依据 Apple HIG Icons：矢量(SVG)、单色模板(currentColor)、
+   统一线宽(stroke-width=1.8)、16px 网格、与相邻文字同权重。 */
+const SVG_LIVE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
+  +'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">'
+  +'<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.3 1.5"/></svg>';
+const SVG_PAUSE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
+  +'stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">'
+  +'<path d="M5.5 3.5v9M10.5 3.5v9"/></svg>';
+const SVG_PLAY='<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
+  +'<path d="M4.5 3.2a.7.7 0 0 1 1.06-.6l7 4.8a.7.7 0 0 1 0 1.2l-7 4.8a.7.7 0 0 1-1.06-.6z"/></svg>';
+
+/* 单位与钱的写法统一：credits_workbuddy → 积分，避免 "1265.65000006 credits_workbuddy" */
+const UNIT={credits_workbuddy:"积分",credits_wb:"积分",credits_qoder:"积分",mock_credits:"积分"};
+const unitOf=u=>UNIT[u]||u||"";
+const balanceText=(v,u)=>{
+  if(v==null) return "未知";
+  return num(v)+" "+(unitOf(u)||"");
+};
+const priceText=x=>{
+  if(x.pricing==="free"||x.is_free) return "免费";
+  if(x.pricing==="dynamic") return "浮动";
+  if(x.price_factor==null) return "未标价";
+  const f=Number(x.price_factor);
+  return (f>=1?f.toFixed(1):String(f))+"×";
+};
+const ctxText=v=>{
+  if(!v) return "";
+  if(v>=10000) return +(v/10000).toFixed(1)+" 万上下文";
+  return v+" 上下文";
+};
+const msText=ms=>ms>=1000?(ms/1000).toFixed(1)+" 秒":ms+" ms";
+/* 错误文案：把人看不懂的英文前缀换成人话，原文保留在后面便于排查 */
+function errText(raw){
+  const s=String(raw||"");
+  if(s.includes("HTTP 429")) return "被限流（429）：额度或频率超限，换个模型再试 —— "+s.replace(/^upstream /,"");
+  if(s.includes("HTTP 401")) return "凭据失效（401）：去服务器检查账号凭据 —— "+s.replace(/^upstream /,"");
+  if(s.includes("unapproved channel")||s.includes("11128")) return "上游风控拒绝（11128）：这次请求被判定为未授权渠道 —— "+s;
+  if(s.includes("no qualified free model")) return "没有可用免费模型，且未开付费兜底（历史记录）";
+  return s;
+}
+
+let toastTimer;
+function toast(msg){
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove("show"),2100);
+}
+
+/* ---------- 复制：http 直连时 navigator.clipboard 不可用（非安全上下文），必须有兜底 ---------- */
+async function copyText(text){
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(text); return true;
+    }
+  }catch{}
+  try{
+    const ta=document.createElement("textarea");
+    ta.value=text; ta.setAttribute("readonly","");
+    ta.style.cssText="position:fixed;top:-1000px;opacity:0";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
+    const ok=document.execCommand("copy"); ta.remove(); return ok;
+  }catch{ return false; }
+}
+
+/* ---------- 扫码登录分享卡片（手机长按保存图片） ----------
+   用户原话：把扫码登录做成手机上可长按保存的图片。
+   做法：内联 SVG 二维码 → Image → Canvas 绘卡片 → toDataURL(png)。
+   白底二维码卡片：标题/副标题/提示，
+   pixelRatio=2 高清输出。移动端长按图片即可保存/识别。 */
+const QRCARD_TEXT={
+  workbuddy:{brand:"WorkBuddy",title:"扫码登录 WorkBuddy",
+    sub:"微信扫码 · 完成手机号验证即可接入网关",
+    hint:"微信长按识别二维码完成登录",foot:"模型网关 · 扫码添加账号",
+    grad:["#0A62C4","#28A0E6"]},
+  qoder:{brand:"Qoder",title:"扫码授权 Qoder",
+    sub:"微信扫码 · 在页面确认授权即可接入网关",
+    hint:"微信长按识别二维码完成授权",foot:"模型网关 · 扫码添加账号",
+    grad:["#6D28D9","#A855F7"]}
+};
+function svgToImage(svg){
+  return new Promise((resolve,reject)=>{
+    // segno / 内联 DOM 的 <svg> 常缺 xmlns，作为独立 blob image 加载会失败。
+    // 补上命名空间再转 Blob，保证既能画进 canvas 又保持二维码清晰。
+    let src=(svg||"").trim();
+    if(src && !/<svg[^>]*\bxmlns=/.test(src)){
+      src=src.replace(/<svg\b/,'<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    const blob=new Blob([src],{type:"image/svg+xml;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{ URL.revokeObjectURL(url); resolve(img); };
+    img.onerror=e=>{ URL.revokeObjectURL(url); reject(e); };
+    img.src=url;
+  });
+}
+function _rr(g,x,y,w,h,r){
+  g.beginPath();
+  g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath();
+}
+async function makeQrShareCard(svg,platform){
+  const t=QRCARD_TEXT[platform]||QRCARD_TEXT.workbuddy;
+  const W=750,H=1080,S=2;
+  const cv=document.createElement("canvas");
+  cv.width=W*S; cv.height=H*S;
+  const g=cv.getContext("2d"); g.scale(S,S);
+  // 背景
+  g.fillStyle="#F5F6F8"; g.fillRect(0,0,W,H);
+  // 顶部渐变 header —— 文案只保留品牌名（WorkBuddy / Qoder），垂直居中放大
+  const grad=g.createLinearGradient(0,0,W,210);
+  grad.addColorStop(0,t.grad[0]); grad.addColorStop(1,t.grad[1]);
+  g.fillStyle=grad; g.fillRect(0,0,W,210);
+  g.fillStyle="#fff"; g.textAlign="left"; g.textBaseline="middle";
+  g.font="700 54px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+  g.fillText(t.brand,40,105);
+  g.textBaseline="alphabetic";
+  // 卡片
+  const cx=W/2, cardX=40, cardW=W-80, cardY=240, cardH=700;
+  g.fillStyle="#fff"; g.strokeStyle="#E5E7EB"; g.lineWidth=1;
+  _rr(g,cardX,cardY,cardW,cardH,20); g.fill(); g.stroke();
+  // 二维码白底容器 —— 不要描边（白底只是保证扫码对比度，边框多余）
+  const qSize=520, qPad=16;
+  const qX=cx-qSize/2, qY=cardY+40;
+  g.fillStyle="#fff";
+  _rr(g,qX,qY,qSize,qSize,12); g.fill();
+  const img=await svgToImage(svg);
+  g.drawImage(img,qX+qPad,qY+qPad,qSize-2*qPad,qSize-2*qPad);
+  // 提示（去掉 foot「模型网关 · 扫码添加账号」那行，只留长按提示）
+  g.textAlign="center"; g.fillStyle="#1F2937";
+  g.font="600 30px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+  g.fillText(t.hint,cx,qY+qSize+64);
+  return cv.toDataURL("image/png");
+}
+function showQrShareCard(svg,platform){
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.78);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:20px";
+  const tip=document.createElement("div");
+  tip.textContent="长按图片保存 / 识别二维码";
+  tip.style.cssText="color:#fff;font-size:15px;-apple-system,BlinkMacSystemFont,sans-serif";
+  const img=document.createElement("img");
+  img.style.cssText="max-width:100%;max-height:82vh;border-radius:14px;box-shadow:0 8px 40px rgba(0,0,0,.5)";
+  const close=document.createElement("button");
+  close.textContent="关闭";
+  close.style.cssText="background:#fff;border:0;border-radius:10px;padding:10px 28px;font-size:15px;cursor:pointer";
+  wrap.appendChild(tip); wrap.appendChild(img); wrap.appendChild(close);
+  document.body.appendChild(wrap);
+  close.onclick=()=>wrap.remove();
+  wrap.onclick=e=>{ if(e.target===wrap) wrap.remove(); };
+  makeQrShareCard(svg,platform).then(data=>{ img.src=data; })
+    .catch(()=>{ wrap.remove(); toast("卡片生成失败"); });
+}
+
+/* ---------- 自定义弹窗（替代浏览器原生 confirm，样式随主题） ---------- */
+function dialog({title,message,rows=[],warn="",confirmText="好",cancelText="取消",danger=false}){
+  return new Promise(resolve=>{
+    const ov=document.getElementById("overlay");
+    const box=document.getElementById("alert");
+    box.innerHTML=`
+      <div class="head"><h2>${esc(title)}</h2>
+        ${message?`<div class="msg">${esc(message)}</div>`:""}</div>
+      ${rows.length?`<div class="rows">${rows.map(([k,v])=>
+        `<div class="arow"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}</div>`:""}
+      ${warn?`<div class="warnline">${esc(warn)}</div>`:""}
+      <div class="acts">
+        <button type="button" data-act="cancel">${esc(cancelText)}</button>
+        <button type="button" data-act="ok" class="${danger?"danger":"primary"}">${esc(confirmText)}</button>
+      </div>`;
+    const close=val=>{ ov.classList.remove("show"); box.innerHTML=""; resolve(val); };
+    box.querySelector('[data-act="cancel"]').onclick=()=>close(false);
+    box.querySelector('[data-act="ok"]').onclick=()=>close(true);
+    ov.classList.add("show");
+  });
+}
+
+/* 单行输入弹窗：返回用户输入（取消返回 null）。样式与 dialog 一致，不用原生 prompt */
+function inputDialog({title,message="",label="",value="",placeholder="",
+                       confirmText="保存",type="text",hint=""}){
+  return new Promise(resolve=>{
+    const ov=document.getElementById("overlay");
+    const box=document.getElementById("alert");
+    box.classList.add("wide");
+    box.innerHTML=`
+      <div class="head"><h2>${esc(title)}</h2>
+        ${message?`<div class="msg">${esc(message)}</div>`:""}</div>
+      <div class="field">
+        ${label?`<label for="dlgInput">${esc(label)}</label>`:""}
+        <input id="dlgInput" type="${esc(type)}" value="${esc(value)}"
+          placeholder="${esc(placeholder)}" autocapitalize="off" spellcheck="false">
+        ${hint?`<div class="hintline">${esc(hint)}</div>`:""}
+        <div class="err" id="dlgErr"></div>
+      </div>
+      <div class="acts">
+        <button type="button" data-act="cancel">取消</button>
+        <button type="button" data-act="ok" class="primary">${esc(confirmText)}</button>
+      </div>`;
+    const input=document.getElementById("dlgInput");
+    const err=document.getElementById("dlgErr");
+    const close=val=>{ ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML=""; resolve(val); };
+    box.querySelector('[data-act="cancel"]').onclick=()=>close(null);
+    box.querySelector('[data-act="ok"]').onclick=()=>{
+      const v=input.value.trim();
+      if(!v){ err.textContent="不能为空"; return; }
+      close(v);
+    };
+    input.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); box.querySelector('[data-act="ok"]').click(); } });
+    ov.classList.add("show");
+    setTimeout(()=>{ input.focus(); input.select(); },60);
+  });
+}
+
+/* SMTP 配置弹窗：多字段，返回对象（取消返回 null）。授权码留空=不改动。 */
+function smtpDialog(cfg){
+  return new Promise(resolve=>{
+    const ov=document.getElementById("overlay");
+    const box=document.getElementById("alert");
+    const f=(id,label,val,ph,type,extra)=>`<div class="field">
+      <label for="${id}">${esc(label)}</label>
+      <input id="${id}" type="${type||"text"}" value="${esc(val||"")}"
+        placeholder="${esc(ph||"")}" autocapitalize="off" spellcheck="false" ${extra||""}>
+      ${extra==="password"?"":(id==="smtpPass"?'<div class="hintline">留空 = 保留已保存的授权码</div>':"")}
+      </div>`;
+    box.classList.add("wide");
+    box.innerHTML=`
+      <div class="head"><h2>SMTP 发信配置</h2>
+        <div class="msg">配置后可用于找回邮件、测试邮件与提醒。留空字段沿用服务器环境变量。</div></div>
+      <div style="max-height:52vh;overflow:auto">
+        ${f("smtpHost","SMTP 主机",cfg.host,"smtp.qq.com")}
+        ${f("smtpPort","端口",cfg.port||465,"465", "number")}
+        ${f("smtpUser","发信账号",cfg.user,"you@example.com")}
+        ${f("smtpFrom","发件显示地址",cfg.from,"留空同发信账号")}
+        ${f("smtpPass","授权码（密码）","","留空则不修改","password")}
+        <div class="field"><label>加密方式</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="display:flex;gap:6px;align-items:center;margin:0"><input id="smtpSsl" type="checkbox" ${cfg.ssl?"checked":""} style="width:auto;height:auto"> SSL / TLS</label>
+          </div>
+          <div class="hintline">465 端口勾选；587 端口不勾选（STARTTLS）</div>
+        </div>
+      </div>
+      <div class="acts">
+        <button type="button" data-act="cancel">取消</button>
+        <button type="button" data-act="ok" class="primary">保存</button>
+      </div>`;
+    const close=val=>{ ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML=""; resolve(val); };
+    box.querySelector('[data-act="cancel"]').onclick=()=>close(null);
+    box.querySelector('[data-act="ok"]').onclick=()=>close({
+      smtp_host:document.getElementById("smtpHost").value.trim(),
+      smtp_port:document.getElementById("smtpPort").value.trim(),
+      smtp_user:document.getElementById("smtpUser").value.trim(),
+      smtp_from:document.getElementById("smtpFrom").value.trim(),
+      smtp_password:document.getElementById("smtpPass").value,
+      smtp_ssl:document.getElementById("smtpSsl").checked?"1":"0",
+    });
+    ov.classList.add("show");
+  });
+}
+
+/* 会话被拒时的整页提示（不再用浏览器 alert） */
+function authWall(kind,detail){
+  const body=document.getElementById("body");
+  const blocked=kind==="blocked";
+  const t=blocked?"访问被临时限制":"需要重新登录";
+  const d=blocked
+    ? "输错次数太多，稍后再试。"
+    : "登录已过期，输一次口令继续。";
+  body.innerHTML=`<div class="group"><div class="card">
+    <div class="step"><div><h3>${t}</h3><p>${esc(d)}</p></div></div>
+    <div class="field">
+      <label for="relogin-token">访问口令</label>
+      <input id="relogin-token" type="password" autocomplete="current-password"
+             autocapitalize="off" spellcheck="false" placeholder="访问口令">
+      <div class="err" id="relogin-err">${detail?esc(detail):""}</div>
+    </div>
+    <div class="field" style="padding-top:0">
+      <button class="btn" id="relogin-go">用口令登录</button>
+      <a class="btn sec" id="relogin-mail" href="${LOGIN}">发一封登录链接到邮箱</a>
+    </div>
+  </div></div>`;
+
+  const inp=document.getElementById("relogin-token");
+  const err=document.getElementById("relogin-err");
+  const go=document.getElementById("relogin-go");
+  if(!inp||!go) return;
+  async function submit(){
+    const v=(inp.value||"").trim();
+    if(!v){ err.textContent="请先输入口令"; inp.focus(); return; }
+    go.disabled=true; go.textContent="登录中…"; err.textContent="";
+    try{
+      const r=await fetch(API("login"),{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({token:v})});
+      let d=null; try{ d=await r.json(); }catch{}
+      if(r.ok&&d&&d.ok){ location.reload(); return; }
+      err.textContent=(d&&d.error)||("登录失败（HTTP "+r.status+"）");
+      if(r.status===429){ go.textContent="暂时不能试了"; return; }
+    }catch(e){
+      err.textContent="网络不通，稍后再试";
+    }
+    go.disabled=false; go.textContent="用口令登录"; inp.select();
+  }
+  go.addEventListener("click",submit);
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); submit(); } });
+  if(!blocked) setTimeout(()=>{ try{ inp.focus(); }catch(e){} },60);
+}
+
+/* ==================== R2.11 细粒度 DOM patch（Vue 式原地更新） ====================
+   实时刷新每 5 秒一次，innerHTML 整块重写会「销毁旧节点→重建新节点」，造成页面跳动、
+   滚动位置归零、输入框失焦。这里做精简版 keyed diff：解析新 HTML 到模板，递归对比现有
+   DOM，只改变化的文本/属性，节点身份保留 → 已绑定的事件自然保留、不重复绑定。
+   位置配对为主（同位置同标签直接复用）；ECharts canvas 容器由 _pskip 跳过。 */
+function _pskip(el){
+  return el._echarts_instance_ || el.__patched_skip__ ||
+    (typeof el.className==="string"&&el.className.indexOf("echarts")>=0);
+}
+function _ppatchNode(oldN,newN){
+  if(oldN.nodeType===3||oldN.nodeType===8){
+    if(oldN.nodeValue!==newN.nodeValue) oldN.nodeValue=newN.nodeValue;
+    return;
+  }
+  if(oldN.nodeType!==1||_pskip(oldN)) return;
+  const oa=oldN.attributes, na=newN.attributes;
+  for(let i=na.length-1;i>=0;i--){
+    const a=na[i];
+    if(a.name==="value") continue;   // 不覆盖用户正在输入的值
+    if(oldN.getAttribute(a.name)!==a.value) oldN.setAttribute(a.name,a.value);
+  }
+  for(let i=oa.length-1;i>=0;i--)
+    if(!newN.hasAttribute(oa[i].name)) oldN.removeAttribute(oa[i].name);
+  _ppatchChildren(oldN,newN);
+}
+function _ppatchChildren(parent,tplParent){
+  const olds=[...parent.childNodes], news=[...tplParent.childNodes];
+  const n=Math.min(olds.length,news.length);
+  for(let i=0;i<n;i++){
+    const a=olds[i], b=news[i];
+    const same=a.nodeType===b.nodeType &&
+      (a.nodeType!==1||a.tagName.toLowerCase()===b.tagName.toLowerCase());
+    if(same) _ppatchNode(a,b);
+    else parent.replaceChild(document.importNode(b,true),a);
+  }
+  for(let i=olds.length-1;i>=n;i--) parent.removeChild(olds[i]);
+  for(let i=n;i<news.length;i++) parent.appendChild(document.importNode(news[i],true));
+}
+function patchDOM(container,html){
+  html=String(html).trim();
+  if(container.innerHTML.trim()===html) return;
+  const tpl=document.createElement("template");
+  tpl.innerHTML=html;
+  _ppatchChildren(container,tpl.content);
+}
+
+async function getJSON(path){
+  const r=await fetch(API(path),{credentials:"same-origin",headers:{"Accept":"application/json"}});
+  if(r.status===401){ authWall("expired"); throw Object.assign(new Error("会话已过期"),{auth:true}); }
+  if(r.status===429){ authWall("blocked"); throw Object.assign(new Error("访问被限制"),{auth:true}); }
+  if(r.status===503) throw new Error("后台未启用（服务器未配置访问口令）");
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.json();
+}
+async function postJSON(path,payload){
+  const r=await fetch(API(path),{method:"POST",credentials:"same-origin",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(payload||{})});
+  if(r.status===401){ authWall("expired"); throw Object.assign(new Error("会话已过期"),{auth:true}); }
+  if(r.status===429){ authWall("blocked"); throw Object.assign(new Error("访问被限制"),{auth:true}); }
+  const text=await r.text();
+  let data=null; try{ data=JSON.parse(text); }catch{}
+  if(!r.ok){
+    const d=(data&&(data.detail||data.error))||text;
+    throw new Error(String(d).slice(0,180));
+  }
+  return data;
+}
+
+/* 当前状态缓存：顶栏副标题要显示平台/账号 */
+let CONFIG=null;
+async function loadConfig(){
+  try{ CONFIG=await getJSON("config"); }catch{ CONFIG=null; }
+  return CONFIG;
+}
+
+async function load(p){
+  const body=document.getElementById("body");
+  if(p==="guide"){ body.innerHTML='<div class="empty"><span class="spin"></span> 加载中…</div>';
+    if(!CONFIG) await loadConfig();
+    body.innerHTML=renderGuide(); bindCopy(); bindTest(); return; }
+  body.innerHTML='<div class="empty"><span class="spin"></span> 加载中…</div>';
+  let d;
+  try{ d=await getJSON(p==="routes"?("schedule?tokens="+SCH_TOKENS):p); }
+  catch(e){ if(e.auth) return; body.innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>'; return; }
+  if(p==="models") renderModels(d.items||d, d.active_account||null);
+  else if(p==="accounts") renderAccounts(d);
+  else if(p==="requests"){
+    // P48：切换历史单独取（折叠后的段），失败不影响请求列表本身
+    // R2.26：改按时间窗口取最近 7 天全量——只取 300 条时，近期 low 密集会把
+    // 几小时前的 high 调用挤出窗口，最近使用列表误显示 high 0。桑基图/时间轴
+    // 仍只画最近 300 段（在 swFilterSegs 里切片），不受影响。
+    let sw=[];
+    try{ sw=(await getJSON("switch-history?days=7")).items||[]; }catch{}
+    renderRequests(d.items||d,sw);
+  }
+  else if(p==="routes") renderSchedule(d);
+  else if(p==="security"){ renderSecurity(d); }
+}
+
+/* ==================== 模型 ==================== */
+const M={q:"",scope:"rec",open:new Set(),items:[],active:null,activeAcc:null};
+
+function groupOf(x){
+  if(x.kind&&x.kind!=="chat") return "gen";
+  if(x.pricing==="free") return "free";
+  if(x.pricing==="dynamic"||x.pricing==="unknown"||x.price_factor==null) return "unpriced";
+  const f=x.price_factor;
+  if(f<=0.2) return "low";
+  if(f<1) return "mid";
+  return "high";
+}
+const GROUPS=[
+  ["free","免费"],
+  ["low","低倍率 0.01–0.2×"],
+  ["mid","中倍率 0.2–1×"],
+  ["high","高倍率 ≥1×"],
+  ["unpriced","浮动 / 未标价"],
+  ["gen","生成类（图片·视频）"],
+];
+const GHINT={
+  high:"倍率 ≥1×，消耗快。",
+  unpriced:"无固定倍率，auto 按任务浮动计费。",
+  gen:"仅生成内容，不支持对话与工具。",
+};
+function defaultOpen(scope){
+  if(scope==="rec") return ["free","low","mid","high"];
+  if(scope==="free") return ["free"];
+  if(scope==="image") return ["free","low"];
+  return ["free","low"];
+}
+
+function renderModels(items,activeAcc){
+  const body=document.getElementById("body");
+  M.items=items||[];
+  /* 账号信息要跨函数用：卡片是在 paintModels() 里画的，不是 renderModels。
+     之前把它当参数往下传，paintModels 拿不到 → ReferenceError → 整张卡片
+     连同整个模型列表都不渲染。放进全局状态才安全。 */
+  M.activeAcc=activeAcc||null;
+  if(!M.items.length){ body.innerHTML='<div class="empty">暂无模型数据</div>'; return; }
+  M.active=M.items.find(x=>x.active)||null;
+  M.open=new Set(defaultOpen(M.scope));
+  body.innerHTML=`
+    <div id="freebar"></div>
+    <div class="search">
+      <svg viewBox="0 0 16 16"><path d="M11.7 10.3a6 6 0 1 0-1.4 1.4l3.3 3.3 1.4-1.4-3.3-3.3zM6.5 10.5a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+      <input id="mq" placeholder="搜索模型名或用途" value="${esc(M.q)}" autocomplete="off">
+    </div>
+    <div class="filters" id="filters">
+      <button class="fchip" data-s="rec" aria-pressed="${M.scope==="rec"}">常用</button>
+      <button class="fchip" data-s="all" aria-pressed="${M.scope==="all"}">全部</button>
+      <button class="fchip" data-s="free" aria-pressed="${M.scope==="free"}">免费</button>
+      <button class="fchip" data-s="image" aria-pressed="${M.scope==="image"}">支持图片</button>
+    </div>
+    <div id="mlist"></div>`;
+  document.getElementById("mq").addEventListener("input",e=>{ M.q=e.target.value.trim().toLowerCase(); paintModels(); });
+  document.getElementById("filters").addEventListener("click",e=>{
+    const b=e.target.closest("[data-s]"); if(!b) return;
+    M.scope=b.dataset.s;
+    document.querySelectorAll("#filters .fchip").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.s===M.scope)));
+    M.open=new Set(defaultOpen(M.scope));
+    paintModels();
+  });
+  paintModels();
+  paintFreeBar();
+}
+
+/* R1.1：免费池健康度条（模型 tab 顶部）。预测是估算，文案如实标注。 */
+function freeBarHTML(f){
+  if(!f||!f.health) return "";
+  const h=f.health, est=f.estimate||{}, last=f.last_429||{};
+  // R1.3：分母是免费池自身容量（真免费模型×可用账号），不是「全部候选」。
+  // 之前拿 142 个候选当分母，8/142=6% 被误标「紧张」，其实免费池是满的。
+  const free=h.free_pairs||0, cap=h.free_capacity||0;
+  const pct=cap?Math.round((free/cap)*100):0;
+  const level=cap===0?"empty":(pct===100?"high":(pct>=50?"mid":"low"));
+  const label={empty:"已耗尽",low:"紧张",mid:"一般",high:"满"}[level];
+  let timeText="";
+  if(est.available){
+    if(est.minutes_left===0) timeText="当前已在付费模式";
+    else if(est.minutes_left==null) timeText=est.reason||"";
+    else timeText="按最近强度，约 "+est.minutes_left+" 分钟后可能进入付费"
+      +(est.range?"（区间 "+est.range[0]+"–"+est.range[1]+" 分钟）":"");
+  }else{
+    timeText=est.reason||"样本不足，暂不预测";
+  }
+  const reset=last.reset_pending?" · 上次 429 将于 "+hhmm(last.reset_at)+" 重置":"";
+  // 真免费模型（目录 pricing=free，无论多长都扣 0）
+  const models=(h.free_models||[]).join("、")||"无";
+  // 短请求免扣：付费模型，仅输入极短时恰好不扣钱 —— 单独一栏，不算免费池
+  const lim=h.short_free_limits||{};
+  const shortParts=(h.short_free_models||[]).map(m=>
+    m+(lim[m]?"（≤"+lim[m]+" token）":"")).join("、");
+  const realTok=h.real_tokens_p50;
+  const probeLine=realTok
+    ? `中位 ${realTok.toLocaleString()} token`
+    : `探针 ${h.est_tokens} token`;
+  return `<div class="group"><div class="card freebar" data-level="${level}">
+    <div class="fbhead"><b>免费池 · ${label}</b><span class="fbnum">${free}/${cap} 可用</span></div>
+    <div class="fbtrack"><i style="width:${pct}%"></i></div>
+    <div class="fbsub">${esc(timeText)}${esc(reset)}</div>
+    <div class="fbsub">${esc(probeLine)} · 真免费模型：${esc(models)}</div>
+    ${shortParts?`<div class="fbsub fbshort">短请求免扣：${esc(shortParts)}</div>`:""}
+  </div></div>`;
+}
+function paintFreeBar(){
+  const host=document.getElementById("freebar");
+  if(!host) return;
+  if(!US.health){ patchDOM(host,'<div class="card"><div class="uload">免费池状态加载中…</div></div>');
+    loadForecast().then(()=>paintFreeBar()); return; }
+  patchDOM(host,freeBarHTML(US.health));
+}
+
+function modelVisible(x){
+  if(M.scope==="free"&&groupOf(x)!=="free") return false;
+  if(M.scope==="image"&&!x.image) return false;
+  if(M.scope==="rec"&&!x.recommended) return false;
+  if(M.q){
+    const hay=(x.model_name+" "+(x.display_name||"")+" "+(x.description||"")).toLowerCase();
+    if(!hay.includes(M.q)) return false;
+  }
+  return true;
+}
+
+function modelRow(x){
+  const g=groupOf(x);
+  const sub=[x.model_name];
+  if(x.context_window) sub.push(ctxText(x.context_window));
+  if(x.image) sub.push("支持图片");
+  const badges=[];
+  if(x.badge) badges.push(`<span class="pill ok">${esc(x.badge)}</span>`);
+  if(g==="high") badges.push(`<span class="pill err">高倍率</span>`);
+  if(g==="unpriced") badges.push(`<span class="pill plain">倍率未知</span>`);
+  const right=x.active?'<span class="tick">✓</span>'
+    :`<span class="pill ${g==="free"?"ok":(g==="high"?"err":"plain")}">${esc(priceText(x))}</span>`;
+  return `<div class="row tap${x.active?" active":""}" data-model="${esc(x.model_name)}">
+    <div class="rmain"><div class="rtitle">${esc(x.display_name||x.model_name)}${badges.join("")}</div>
+      <div class="rsub">${esc(sub.join(" · "))}</div></div>
+    <div class="rright">${right}</div></div>`;
+}
+
+function paintModels(){
+  const box=document.getElementById("mlist");
+  const visible=M.items.filter(modelVisible);
+  if(!visible.length){ box.innerHTML='<div class="empty">没有匹配的模型</div>'; return; }
+  let h="";
+  // 当前使用：始终置于顶部，带「手动/默认」来源与重置入口
+  if(M.active){
+    const a=M.active;
+    /* P48：明确写「调度器预览」而不是「当前使用」——每次请求会在账号×模型池里
+       重新择优，这个只是「典型短请求会选谁」。接入页同一口径，两边不再打架。 */
+    /* P49：账号和模型必须同源 —— 后端 active_account 就是调度器候选计划里
+       那个候选（同一套 _active_upstream()），不是「余额最多的那个」。
+       旧写法依赖 CONFIG.account，而模型页初始化时 CONFIG 还没加载完，
+       导致「账号」那一截经常不显示。 */
+    const acc=M.activeAcc||(CONFIG&&CONFIG.account?CONFIG.account:null);
+    /* R1.2：优先显示「本次预览的实测价格」（est_cost/free_upto），而不是目录倍率。
+       hunyuan-chat 这类目录未标价、但短请求实测免费的模型，旧逻辑显示「未标价」
+       让人以为在偷偷扣费——实测免费就该写「本次免费」。 */
+    const activePrice = a.est_cost==null ? priceText(a)
+      : (a.est_cost===0 ? "本次免费" : "本次 "+num(a.est_cost)+" 积分");
+    const freeHint = a.free_upto>0 ? " · ≤"+a.free_upto+" token 免费" : "";
+    h+=`<div class="group"><div class="ghead">当前选中 · 自动调度预览</div><div class="card">
+      <div class="row active"><div class="rmain">
+        <div class="rtitle">${esc(a.display_name||a.model_name)}<span class="pill info">${esc(activePrice)}</span></div>
+        <div class="rsub">${esc(a.model_name)} · 对外名 ${esc(a.public_name||"")}${acc?(" · 账号 "+platBadge(acc.platform,dispLabel(acc.label))):""}${freeHint} · 调度预览</div>
+      </div><div class="rright"><span class="tick">✓</span></div></div>
+    </div></div>`;
+  }
+  for(const [g,label] of GROUPS){
+    const rows=visible.filter(x=>groupOf(x)===g);
+    if(!rows.length) continue;
+    rows.sort((a,b)=>{
+      const fa=a.price_factor==null?999:a.price_factor, fb=b.price_factor==null?999:b.price_factor;
+      return fa-fb||String(a.display_name||a.model_name).localeCompare(String(b.display_name||b.model_name),"zh");
+    });
+    const open=M.open.has(g);
+    h+=`<div class="group"><div class="card">
+      <div class="gh" data-g="${g}" aria-expanded="${open}">
+        <span class="t">${label}</span><span class="c">${rows.length}${g==="high"?" · 谨慎":"个"}</span>
+        <span class="cv">▶</span>
+      </div>
+      ${open&&GHINT[g]?`<div class="ghint">${GHINT[g]}</div>`:""}
+      ${open?`<div class="scroll-list">${rows.map(modelRow).join("")}</div>`:""}
+    </div></div>`;
+  }
+  const tops=new Map();
+  box.querySelectorAll(".scroll-list").forEach(sl=>tops.set(sl.parentElement.querySelector(".gh")?.dataset.g||"",sl.scrollTop));
+  patchDOM(box,h);
+  box.querySelectorAll(".scroll-list").forEach(sl=>{
+    const g=sl.parentElement.querySelector(".gh")?.dataset.g||"";
+    if(tops.has(g)) sl.scrollTop=tops.get(g);
+  });
+  box.querySelectorAll(".gh").forEach(el=>el.onclick=()=>{
+    const g=el.dataset.g;
+    if(M.open.has(g)) M.open.delete(g); else M.open.add(g);
+    paintModels();
+  });
+  box.querySelectorAll("[data-model]").forEach(el=>el.onclick=async()=>{
+    const x=M.items.find(i=>i.model_name===el.dataset.model);
+    if(!x||x.active){ toast("已经是当前模型"); return; }
+    const g=groupOf(x);
+    if(g==="free"){ switchModel(x); return; }
+    const rows=[["模型 ID",x.model_name],["倍率",priceText(x)],["平台","WorkBuddy"],
+      ["上下文",x.context_window?ctxText(x.context_window):"未知"]];
+    const ok=await dialog({
+      title:x.display_name||x.model_name,
+      rows, confirmText:"切换", danger:g==="high",
+      warn:g==="high"?"倍率 ≥1×，消耗快。":
+           (g==="unpriced"?"未标价，切换后验证一次。":""),
+    });
+    if(ok) switchModel(x);
+  });
+}
+
+async function switchModel(x){
+  try{
+    await postJSON("model",{model:x.model_name});
+    toast("已切换到 "+(x.display_name||x.model_name));
+    await refreshChip();
+    renderModels(M.items.map(i=>({...i,active:i.model_name===x.model_name})));
+  }catch(e){ toast("切换失败："+e.message); }
+}
+
+/* ==================== 账号 ==================== */
+const ACC={open:new Set(),items:[],platform:"all",platforms:[]};
+
+const creditText=v=>{
+  if(v==null) return "未知";
+  const n=Number(v);
+  return n.toLocaleString("zh-CN",{minimumFractionDigits:0,maximumFractionDigits:2});
+};
+/* R2.1：token 用中文数量级显示，不甩一长串数字、不加英文 tok。
+   用户举例「3 千万 / 3 亿 / 3 千 2 百万」——按中文习惯分档：
+     ≥1 亿   → X.X 亿（1.34 亿）
+     ≥1 千万 → X.X 千万（3.1 千万 = 3107 万；3.2 千万 = 3200 万）
+     ≥1 万   → X 万
+     <1 万   → 整数
+   小数去掉无意义的尾零（3.0→3），保证读起来干净。 */
+const tokText=v=>{
+  if(v==null) return "未知";
+  const n=Number(v)||0, a=Math.abs(n);
+  const trim=x=>x.toFixed(1).replace(/\.0$/, "");
+  if(a>=1e8)  return trim(n/1e8)+" 亿";
+  if(a>=1e7)  return trim(n/1e7)+" 千万";
+  if(a>=1e4)  return trim(n/1e4)+" 万";
+  return String(Math.round(n));
+};
+const pctText=r=>r==null?"—":(r*100).toFixed(r<0.1?1:0)+"%";
+
+function daysLeftText(ts){
+  if(!ts) return "未标注";
+  const days=(ts*1000-Date.now())/86400000;
+  if(days<=0) return "已过期";
+  if(days<1) return "剩 "+Math.max(1,Math.round(days*24))+" 小时";
+  return "剩 "+Math.round(days)+" 天";
+}
+
+/* ---------- P27 用量视图 ----------
+   用户反馈：「积分消耗看起来不直观，看不到今天消耗的数量，点击没反应」。
+   两个口径必须分开，否则数字永远和平台 App 对不上：
+     · 平台账单（used 快照差值）→ 「今日消耗」大字，含手机 App/网页版的消耗
+     · 网关请求（requests 表）  → 24 小时分布，能看出几点、用什么模型、多少次、多慢
+   24 小时数据按 label+日期 缓存，切日期/切小时不重复打接口。 */
+const US={day:new Map(),cache:new Map(),hour:new Map(),hourCache:new Map(),bill:new Map(),
+  metric:new Map(),chart:new Map(),
+  mode:new Map(),  /* R1.1：每个账号（含 __all__ 汇总）独立的 low/high/全部 选择 */
+  /* R2.19/R2.23：小时明细展开条数（key=label|day|hour，默认 10，刷新页面自动重置）。
+     R2.23 删掉 liveHour——默认就是实时跟踪最新小时，不需要额外开关。 */
+  hourLimit:new Map(),
+  health:null};    /* R1.1：免费池健康度 + 预测（模型 tab 顶部进度条） */
+const sid=s=>"x"+[...String(s??"")].reduce((a,c)=>((a*31+c.charCodeAt(0))>>>0),7).toString(36);
+const pad2=n=>String(n).padStart(2,"0");
+const todayKey=()=>{const d=new Date();
+  return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());};
+const hhmm=ts=>{const d=new Date(ts*1000);return pad2(d.getHours())+":"+pad2(d.getMinutes());};
+
+function todayNote(bt){
+  if(!bt||bt.delta==null) return (bt&&bt.note)||"今天还没有读到账单";
+  // R2.12：这两个口径必须说清，否则会被误读成网关扣费：
+  //   ① 这是平台账单数，含官方客户端/网页版，不等于经过网关的请求；
+  //   ② 无昨夜基线（whole_day=false）时从账号首条快照算起，不是完整自然日。
+  // R2.18：主视图已改用「累计已用」，这里只解释今日读数的口径，不再重复累计数字。
+  return bt.whole_day ? "平台账单 · 含官方客户端/网页版"
+                      : "平台账单 · 自加入起 · 含官方客户端";
+}
+
+/* 两个口径为什么对不上（P29）。用户问的原话：
+   「也有可能会登录 workbuddy 软件使用积分，所以会和你统计的积分消耗会对不上是吧？
+     这种情况是不是要加一个说明，就是日消耗和图表展示里的日消耗对不上的差额部分」
+   对。而且差额**不能**硬算成一个数：上游只在少数响应里回传扣费（今天 60 次成功请求里
+   只有 18 次带金额），所以「账单 − 网关」剩下的那截里既有官方客户端/网页版的消耗，
+   也有网关见过但拿不到金额的请求。这里只解释成分，不给假精度。 */
+function gapNote(label,d){
+  const bt=US.bill.get(label);
+  if(!bt||bt.delta==null||d.day!==todayKey()) return "";
+  const total=d.requests||0;
+  if(!total) return "";
+  const known=d.credit_requests||0;
+  const unknown=Math.max(0,total-known);
+  const gw=known?(creditText(d.credit)+" 积分"):"—";
+  return `<div class="sub2">口径对比</div>
+    <div class="kv"><span>平台账单（今日）</span><b>−${creditText(bt.delta)} 积分</b></div>
+    <div class="kv"><span>经过本网关</span><b>${total} 次请求</b></div>
+    <div class="kv"><span>上游回传扣费</span><b>${known} 次 · ${gw}</b></div>
+    ${unknown>0?`<div class="gapnote">${unknown} 次未回传金额，差额无法精确拆分。</div>`:""}`;
+}
+
+/* 近 7 天日期切换：今天/昨天给名字，更早给 M-D */
+function dayChips(label){
+  const sel=US.day.get(label)||todayKey();
+  const out=[];
+  for(let i=6;i>=0;i--){
+    const d=new Date(); d.setDate(d.getDate()-i);
+    const k=d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+    const nm=i===0?"今天":(i===1?"昨天":(d.getMonth()+1)+"-"+d.getDate());
+    out.push(`<button type="button" data-day="${k}" aria-pressed="${k===sel}">${nm}</button>`);
+  }
+  return `<div class="udays">${out.join("")}</div>`;
+}
+
+function modelRows(d,mode){
+  // R2.19：pending（请求中）的记录还没有模型名，后端标成 "unknown"。
+  // 这种「还没确定」的行不该出现在模型分布里，容易让人以为真有个 unknown 模型在跑。
+  // 请求数仍计入小时总量（后端口径不变），只是这里不单列这一行。
+  const list=(d.models||[]).filter(m=>
+    m.name!=="unknown" && (!mode||mode==="all"||m.public_mode===mode));
+  if(!list.length) return "";
+  const total=list.reduce((a,m)=>a+m.requests,0)||1;
+  return list.map(m=>{
+    const pct=Math.max(2,Math.round((m.requests/total)*100));
+    const tag=m.public_mode==="high"?'<span class="mtag high">high</span>'
+      :(m.public_mode==="low"&&mode==="all"?'<span class="mtag low">low</span>':"");
+    return `<div class="mdl"><span class="nm">${tag}${esc(m.name)}</span>
+      <span class="ct">${m.requests} 次</span>
+      <span class="bw"><i style="width:${pct}%"></i></span></div>`;
+  }).join("");
+}
+
+function hourBody(label,d,hour,isLatest){
+  const h=(d.hours||[]).find(x=>x.hour===hour);
+  if(!h) return "";
+  const key=label+"|"+d.day+"|"+hour;
+  const items=US.hourCache.get(key);
+  /* R2.23：去掉独立的「最新 / 08:00 明细 / 实时跟踪」标题行。
+     「最新」标签改成内联在下面这行文案前（仅默认最新小时显示）。 */
+  const latest=isLatest?'<span class="latest-tag">最新</span>':"";
+  const head0=`${hour}:00 · ${h.requests} 次请求${
+    h.latency?` · 最慢 ${(h.latency/1000).toFixed(1)}s`:""}${
+    h.errors?` · ${h.errors} 次失败`:""}`;
+  const head=`<div class="hsum">${latest}${head0}</div>`;
+  if(items==="loading"||items==null)
+    return head+'<div class="uload">读取明细…</div>';
+  /* R2.22：进行中的请求也要保留——它是一条真实请求。模型名在路由确定后由后端
+     attach_route() 回填；极少数回填前的瞬间/历史旧数据可能为空，用对外模型
+     low/high 占位（而不是误导性的 unknown/「未知」）。这里不再整行过滤。 */
+  if(!items.length) return head+'<div class="uload">这个时段没有明细</div>';
+  /* R2.19：加载更多——默认 10 条，点一次 +10，刷新页面自动重置（US.hourLimit 不持久）。 */
+  const limit=US.hourLimit.get(key)||10;
+  const shown=items.slice(0,limit);
+  /* R2.3：状态不再写文本，改色点（绿=成功/红=失败或取消/橙=进行中）；
+     明细补平台角标 WB/QD + 账号掩码，口径与账号页/流向图一致。 */
+  const rows=shown.map(it=>{
+    const st=it.status||"unknown";
+    const badge=platBadge(it.platform);
+    const acct=dispLabel(it.account||"");
+    /* R2.22：实际模型名为空/未知（回填前的瞬间或历史数据）时，用对外模型
+       low/high 占位，绝不显示 unknown/「未知」；正常行照常显示真实模型名。 */
+    const model=(it.model && it.model!=="unknown")
+      ? it.model : (it.public_model||"");
+    return `<div class="hitem" data-st="${esc(st)}"><i class="sdot"></i>
+      <span class="t">${hhmm(it.at)}</span>
+      <span class="meta">${badge}${acct?`<span class="acct">${esc(acct)}</span>`:""}
+        <span class="m">${esc(model||"—")}</span></span>
+      <span class="n">${
+        it.latency_ms?((it.latency_ms/1000).toFixed(1)+"s"):"—"}${
+        it.tokens?" · "+tokText(it.tokens)+"":""}</span></div>`;
+  }).join("");
+  /* R2.24：展开/收起控件挪到底部图例行（和「成功 失败/取消 进行中」同行），
+     不再放顶部文案行。点一次 +10，全部展开后显示「收起」回到 10 条。 */
+  let expand="";
+  if(items.length>10){
+    const limit=US.hourLimit.get(key)||10;
+    const expanded=limit>=items.length;
+    expand=`<button type="button" class="hmore" data-hour-more="${hour}" `
+      +`data-total="${items.length}" aria-expanded="${expanded}">${
+        expanded?'收起':`已显示 ${Math.min(limit,items.length)} / ${items.length} 条`}`
+      /* R2.37：图标方向只由 CSS 的 aria-expanded 旋转控制，这里固定输出 ▼。
+         旧写法在 JS 里按展开态切换三角字符，会和 CSS 的 rotate(180deg) 叠加 ——
+         展开时字符已翻上、CSS 又转 180° 翻回朝下，文案说「收起」图标却仍朝下。 */
+      +`<span class="caret">▼</span></button>`;
+  }
+  const legend=`<div class="hlegend-st"><span><i style="background:var(--ok)"></i>成功</span>`+
+    `<span><i style="background:var(--err)"></i>失败/取消</span>`+
+    `<span><i style="background:var(--warn)"></i>进行中</span>${expand}</div>`;
+  return head+`<div class="hlist">${rows}</div>${legend}`;
+}
+
+/* P48：24 小时图表——维度（请求数/积分/Token）+ 图形（柱状/折线）可切换。
+   免费模型 credit=0，积分图可能全空，但 Token 图仍有数据 —— 这正是用户要的：
+   「一直用免费模型没积分数据，想看 token 消耗」。
+   数据全部来自 usage/day 已返回的 hours[].requests/credit/tokens，无需改后端。 */
+const METRICS=[
+  {k:"requests",n:"请求数",fmt:v=>String(v)+" 次"},
+  {k:"credit",n:"积分",fmt:v=>v==null?"—":num(v)+" 分"},
+  {k:"tokens",n:"Token",fmt:v=>v?tokText(v):"0"},
+];
+/* R1.1：模式过滤后的取值。mode="all" 用小时总量；low/high 用 by_mode 分量。 */
+function hourVal(h,metric,mode){
+  if(mode==="low"||mode==="high"){
+    const bm=(h.by_mode&&h.by_mode[mode])||{};
+    return metric==="credit"?(bm.credit||0):(metric==="tokens"?(bm.tokens||0):(bm.requests||0));
+  }
+  return metric==="credit"?(h.credit||0):(metric==="tokens"?(h.tokens||0):(h.requests||0));
+}
+const MODES=[["all","全部"],["low","low"],["high","high"]];
+
+function hoursHTML(label,d){
+  const sel=US.hour.get(label)||null;
+  const metric=US.metric.get(label)||"requests";
+  const chart=US.chart.get(label)||"bar";
+  const mode=US.mode.get(label)||"all";
+  const hrs=d.hours||[];
+  const val=h=>hourVal(h,metric,mode);
+  /* R2.0：时间轴动态收敛到「有数据 / 已发生」的小时，不画未来空段。
+     - 今天：只到当前小时（浏览器本地时区），未来小时不占横向空间；
+     - 历史日期：只到最后一个有数据的小时，避免右侧大片空白。
+     若某小时有数据却落在「未来」（服务器/浏览器时区差），一并纳入，不丢数据。 */
+  const lastDataHour=hrs.reduce((mx,h)=>hourVal(h,"requests","all")>0
+    ? Math.max(mx,+h.hour) : mx, -1);
+  const isToday=d.day===todayKey();
+  const nowHour=new Date().getHours();
+  let limit=isToday?Math.max(nowHour,lastDataHour):lastDataHour;
+  if(limit<0) limit=isToday?nowHour:5;   // 无数据也留个可见区间，别全空
+  const shownHrs=hrs.filter(h=>+h.hour<=limit);
+  /* X 轴刻度按实际渲染区间动态取点（0 / ¼ / ½ / ¾ / 末），去重后升序。 */
+  const axisTicks=()=>{
+    if(!shownHrs.length) return [];
+    const last=+shownHrs[shownHrs.length-1].hour;
+    const cand=[0,Math.round(last/4),Math.round(last/2),Math.round(last*3/4),last]
+      .filter(n=>n>=0&&n<=last);
+    return [...new Set(cand)].sort((a,b)=>a-b);
+  };
+  /* 真实峰值（可为 0）用于标注；绘图归一用 max(1,...) 避免除零。 */
+  const peakVal=Math.max(0,...hrs.map(val));
+  const peak=Math.max(1,peakVal);
+  const peakHour=peakVal>0?(hrs.find(h=>val(h)===peakVal)||{}).hour:null;
+  const total=mode==="all"?(d.requests||0):hrs.reduce((a,h)=>a+val(h),0);
+  const met=METRICS.find(m=>m.k===metric)||METRICS[0];
+  /* R2.2：顶部读数行是「当前读数」，不是固定峰值——
+     默认显示全天合计；点柱/点折线点后跟着显示那一小时的数值（sel 变化时重绘）。
+     峰值数值改标在峰值柱顶 / 折线峰值点旁（见下方 hbarpk / hlinepk），
+     避免和本行重复——上次两个「277.17 分」糊一起就是把峰值塞进本行导致的。 */
+  const sumVal=hrs.reduce((a,h)=>a+val(h),0);
+  const selH=sel!=null?hrs.find(h=>h.hour===sel):null;
+  const readout=selH
+    ? `<div class="hpeak"><b>${esc(sel)}:00</b> · ${met.fmt(val(selH))}</div>`
+    : `<div class="hpeak">合计 <b>${met.fmt(sumVal)}</b> · 全天</div>`;
+
+  const controls=`<div class="hctl">
+    <div class="hseg">${METRICS.map(m=>`<button type="button" data-metric="${m.k}" aria-pressed="${metric===m.k}">${m.n}</button>`).join("")}</div>
+    <div class="hseg">${[["bar","柱状"],["line","折线"]].map(([k,n])=>`<button type="button" data-chart="${k}" aria-pressed="${chart===k}">${n}</button>`).join("")}</div>
+    <div class="hseg">${MODES.map(([k,n])=>`<button type="button" data-mode="${k}" aria-pressed="${mode===k}">${n}</button>`).join("")}</div>
+  </div>`;
+
+  let graph;
+  /* R1.1：全部模式 = low + high 两条线/两段柱；单模式 = 一条/一段。 */
+  const showBoth=mode==="all";
+  const mval=(h,m)=>hourVal(h,metric,m);
+  const bothPeak=Math.max(1,...hrs.flatMap(h=>showBoth?[mval(h,"low"),mval(h,"high")]:[val(h)]));
+  if(chart==="line"){
+    /* 折线用内联 SVG：宽 600 / 高 54 的 viewBox 自适应，点可点开明细。
+       polyline 必须 fill=none（规范），实心点用 circle 单独画。 */
+    const W=600,H=54,PAD=3,N=Math.max(1,shownHrs.length-1);
+    // R2.2：找到全图峰值点（跨 low/high），一会儿在它旁边标数值。
+    let peakDot=null;
+    const mkSeries=m=>{
+      const pts=shownHrs.map((h,i)=>({
+        x:PAD+(i/N)*(W-2*PAD),
+        y:H-PAD-(mval(h,m)/bothPeak)*(H-2*PAD), h, m,
+      }));
+      const poly=pts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" ");
+      const seriesMax=Math.max(0,...pts.map(p=>mval(p.h,p.m)));
+      const dots=pts.map(p=>{
+        const v=mval(p.h,p.m);
+        if(!v) return "";
+        const isPk=v===seriesMax && v>0;
+        // 全图只标一个峰点标签：优先当前 mode 的序列，showBoth 时取首次匹配。
+        if(isPk && !peakDot) peakDot={x:p.x,y:p.y,v,m};
+        return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${isPk?3.2:2.4}" class="m-${p.m}${isPk?" pk":""}"><title>${p.h.hour}:00 · ${p.m} · ${met.fmt(v)}</title></circle>`;
+      }).join("");
+      const color=m==="low"?"var(--accent)":"var(--purple,#8944AB)";
+      return `<polyline points="${poly}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>${dots}`;
+    };
+    const series=showBoth?mkSeries("low")+mkSeries("high"):mkSeries(mode);
+    const legend=showBoth?`<div class="hlegend"><span><i style="background:var(--accent)"></i>low</span><span><i style="background:var(--purple,#8944AB)"></i>high</span></div>`:"";
+    // 峰值点数值用 HTML overlay 定位（SVG 用 preserveAspectRatio=none，文字会变形）。
+    // left/top 用相对百分比，跟随容器宽度自适应；超过右缘就靠左显示避免溢出。
+    // 峰值点在两端时标签会伸出容器（手机端尤其明显），把 left 夹在 12%~88%。
+    const pkLeft=peakDot?Math.min(88,Math.max(12,peakDot.x/W*100)):0;
+    const pkLabel=peakDot
+      ? `<span class="hlinepk" style="left:${pkLeft.toFixed(1)}%;top:${(peakDot.y/H*100).toFixed(1)}%">${met.fmt(peakDot.v)}</span>` : "";
+    graph=`<div class="hline"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="24 小时 ${met.n} 折线图">
+      ${series}</svg>
+      ${pkLabel}
+      <div class="hlinehit">${shownHrs.map(h=>`<button type="button" data-hour="${h.hour}" class="${h.errors?"haserr":""}" aria-pressed="${sel===h.hour}" aria-label="${h.hour} 点 ${met.fmt(val(h))}"></button>`).join("")}</div></div>${legend}`;
+  }else{
+    const bars=shownHrs.map(h=>{
+      const v=val(h);
+      const hgt=v?Math.max(4,Math.round((v/peak)*54)):2;
+      const isPeak=v>0&&h.hour===peakHour;
+      /* 全部模式：一根柱分两段——low 在下（主色），high 在上（紫）。 */
+      let inner;
+      if(showBoth){
+        const lv=mval(h,"low"), hv=mval(h,"high"), tot=lv+hv;
+        const lh=tot?Math.round((lv/tot)*hgt):0;
+        const hh2=hgt-lh;
+        inner=`<i class="seg-low" style="height:${lh}px"></i><i class="seg-high" style="height:${hh2}px"></i>`;
+      }else{
+        /* R2.3：峰值柱不再常亮「选中态」，只保留柱顶数值标签；
+           真正的选中态由 aria-pressed 控制（点哪根亮哪根）。 */
+        inner=`<i style="height:${hgt}px"></i>`;
+      }
+      const tip=showBoth?`${h.hour}:00 · low ${met.fmt(mval(h,"low"))} / high ${met.fmt(mval(h,"high"))}`:`${h.hour}:00 · ${met.fmt(v)}`;
+      return `<button type="button" data-hour="${h.hour}" class="${h.errors?"haserr":""} ${showBoth?"stacked":""}"
+        aria-pressed="${sel===h.hour}" aria-label="${h.hour} 点 ${met.fmt(v)}"
+        title="${tip}">${inner}${
+          isPeak?`<span class="hbarpk">${met.fmt(v)}</span>`:""}</button>`;
+    }).join("");
+    const legend=showBoth?`<div class="hlegend"><span><i style="background:var(--accent)"></i>low</span><span><i style="background:var(--purple,#8944AB)"></i>high</span></div>`:"";
+    graph=`<div class="hbars">${bars}</div>${legend}`;
+  }
+
+  const sum=`<div class="hsum">${esc(d.day)} · ${total} 次请求${
+      d.errors?` · <span style="color:var(--err)">${d.errors} 次失败</span>`:""}${
+      metric==="credit"&&d.credit_requests===0?`<br><span class="hwarn">上游今天还没回传过扣费金额，积分图会全空；切到 Token 看实际用量。</span>`:""}</div>`;
+  /* R2.19/R2.23：未点选时默认显示「最新有数据小时」的明细，而不是「点图看…」
+     提示——用户要一进页面就看到实时数据。点柱/点后再切到那一小时；未点选时
+     refreshAccountData 每轮刷新都跟随最新小时（默认实时跟踪，无需开关）。 */
+  const withData=shownHrs.filter(h=>hourVal(h,"requests","all")>0);
+  const latestHour=withData.length?withData[withData.length-1].hour:null;
+  const shownHour=sel!=null?sel:latestHour;
+  /* R2.23：删掉「最新 / 08:00 明细 / 实时跟踪」独立标题行——默认就是实时跟踪，
+     按钮多余；「最新」标签内联到明细文案行（sel==null 即默认最新时显示）。 */
+  const hourPanel=shownHour!=null
+    ? hourBody(label,d,shownHour,sel==null)
+    : '<div class="uload">点图看那一小时的明细</div>';
+  const body=total
+    ? `${controls}${readout}${graph}<div class="hx">${axisTicks().map(t=>`<span>${t}</span>`).join("")}</div>${sum}
+       ${gapNote(label,d)}
+       ${hourPanel}
+       <div class="sub2">模型分布</div>${modelRows(d,mode)}`
+    : `${controls}<div class="uload">这天没有网关请求。<br>官方客户端的消耗只计在「今日消耗」里。</div>`;
+  return dayChips(label)+body;
+}
+
+async function loadHour(label,day,hour){
+  const key=label+"|"+day+"|"+hour;
+  if(US.hourCache.has(key)) return;
+  US.hourCache.set(key,"loading");
+  try{
+    const r=await getJSON(`usage/hour?label=${encodeURIComponent(label)}&date=${day}&hour=${hour}`);
+    US.hourCache.set(key,r.items||[]);
+  }catch(e){ US.hourCache.set(key,[]); }
+}
+
+async function paintHours(label){
+  const host=document.getElementById("uh-"+sid(label));
+  if(!host) return;
+  const day=US.day.get(label)||todayKey();
+  const key=label+"|"+day;
+  let d=US.cache.get(key);
+  if(!d){
+    host.innerHTML=dayChips(label)+'<div class="uload">加载中…</div>';
+    try{
+      d=await getJSON(`usage/day?label=${encodeURIComponent(label)}&date=${day}`);
+      US.cache.set(key,d);
+    }catch(e){
+      host.innerHTML=dayChips(label)+'<div class="uload">读取失败：'+esc(e.message)+'</div>';
+      return;
+    }
+  }
+  // R2.19：未手动选中时也要预拉「最新有数据小时」的明细，
+  // 否则默认视图会一直卡在「读取明细…」。实时跟踪开启同理。
+  if(US.hour.get(label)==null){
+    const lh=latestDataHour(d,day);
+    if(lh!=null) await loadHour(label,day,lh);
+  }
+  const now=document.getElementById("uh-"+sid(label));
+  if(!now) return;
+  patchDOM(now,hoursHTML(label,d));
+  bindUsage(now,label,day);
+}
+
+/* R2.19：某天「最新有数据小时」。今天按已发生小时收敛，历史按最后有数据的小时。
+   与 hoursHTML 里 shownHrs 的口径一致（isToday→nowHour, 否则 lastDataHour）。 */
+function latestDataHour(d,day){
+  const hrs=d.hours||[];
+  const lastData=hrs.reduce((mx,h)=>(h.requests||0)>0?Math.max(mx,+h.hour):mx,-1);
+  const isToday=day===todayKey();
+  let limit=isToday?Math.max(new Date().getHours(),lastData):lastData;
+  if(limit<0) return null;
+  const cand=hrs.filter(h=>+h.hour<=limit && (h.requests||0)>0);
+  return cand.length?String(cand[cand.length-1].hour):null;
+}
+
+/* R2.7 实时刷新：先在后台把数据取到缓存（失败则保留旧数据、绝不动 DOM），
+   全部就绪后再一次性重绘——这样刷新瞬间不会出现「清空成加载中」的空白帧。
+   用户点开的小时明细也要同步重拉，否则清了 hourCache 后会一直卡在「读取明细…」。 */
+async function refreshAccountData(label){
+  const day=US.day.get(label)||todayKey();
+  const key=label+"|"+day;
+  try{
+    const d=await getJSON("usage/day?label="+encodeURIComponent(label)+"&date="+day);
+    US.cache.set(key,d);
+  }catch(e){ return false; }        // 取数失败：保留旧缓存与旧 DOM，下次刷新再试
+  let hr=US.hour.get(label);
+  /* R2.23：默认就是实时跟踪——未手动选中时每次刷新都跟随最新有数据小时。
+     只有用户点了某根柱子（US.hour 有值）才锁定那一小时。 */
+  if(hr==null) hr=latestDataHour(US.cache.get(label+"|"+day),day);
+  if(hr!=null){
+    const hkey=label+"|"+day+"|"+hr;
+    US.hourCache.delete(hkey);
+    await loadHour(label,day,hr);
+  }
+  return true;
+}
+function repaintHours(label){
+  const host=document.getElementById("uh-"+sid(label));
+  if(!host) return;                // 期间被收起/重绘了
+  const day=US.day.get(label)||todayKey();
+  const d=US.cache.get(label+"|"+day);
+  if(!d) return;
+  const st=host.querySelector(".scroll-list"); const top=st?st.scrollTop:0;
+  patchDOM(host,hoursHTML(label,d));
+  const st2=host.querySelector(".scroll-list"); if(st2) st2.scrollTop=top;
+  bindUsage(host,label,day);
+}
+
+function bindUsage(host,label,day){
+  host.onclick=async e=>{
+    const db=e.target.closest("[data-day]");
+    if(db){
+      US.day.set(label,db.dataset.day);
+      US.hour.delete(label);
+      paintHours(label);
+      return;
+    }
+    const mb=e.target.closest("[data-metric]");
+    if(mb){ US.metric.set(label,mb.dataset.metric); paintHours(label); return; }
+    const cb=e.target.closest("[data-chart]");
+    if(cb){ US.chart.set(label,cb.dataset.chart); paintHours(label); return; }
+    const mob=e.target.closest("[data-mode]");
+    if(mob){ US.mode.set(label,mob.dataset.mode); paintHours(label); return; }
+    const hb=e.target.closest("[data-hour]");
+    if(hb){
+      const hour=hb.dataset.hour;
+      // 再点一次同一根柱子就收起明细（回到默认「最新」实时视图）
+      if(US.hour.get(label)===hour) US.hour.delete(label);
+      else { US.hour.set(label,hour); await loadHour(label,day,hour); }
+      paintHours(label);
+      return;
+    }
+    const more=e.target.closest("[data-hour-more]");
+    if(more){
+      const hour=more.dataset.hourMore;
+      const k=label+"|"+day+"|"+hour;
+      const cur=US.hourLimit.get(k)||10;
+      // R2.23：展开/收起循环——10 → 20 → … → 全部 → 收起回 10。
+      US.hourLimit.set(k, cur>=(more.dataset.total?+more.dataset.total:1e9) ? 10 : cur+10);
+      paintHours(label);
+      return;
+    }
+  };
+}
+
+/* P41：内部唯一键带平台前缀（qoder:<手机号>），显示时去掉——
+   左侧平台标签已经能区分，页面上再带前缀反而看不懂。 */
+/* R1.2：账号显示名唯一口径。底层 label（凭据文件名/DB 唯一键）保持不变，
+   只在展示层把 nickname 换成可读显示名。需要自定义昵称映射时由后端
+   gateway/display.py 的 GATEWAY_DISPLAY_ALIAS 环境变量统一处理，口径一处维护。 */
+const DISP_ALIAS={};
+function dispLabel(l){
+  const s=String(l||"").replace(/^qoder:/,"");
+  if(DISP_ALIAS[s]) return DISP_ALIAS[s];
+  // 11 位手机号自动掩码（新增账号零登记）
+  if(/^1\d{10}$/.test(s)) return s.slice(0,3)+"****"+s.slice(-4);
+  return s;
+}
+/* 平台角标：账号 tab / 调度切换 / 请求列表共用同一实现，保证颜色一致。
+   R1 Q5：显示缩写（WorkBuddy→WB / Qoder→QD），title 保留全称（hover 可见）。
+   平台是品牌标识，颜色固定不随主题变（见 .ptag CSS 的 data-plat 选择器）。 */
+const PLAT_SHORT={workbuddy:"WB",qoder:"QD",mock:"模拟"};
+const PLAT_FULL={workbuddy:"WorkBuddy",qoder:"Qoder",mock:"本地模拟"};
+function platBadge(platform,label){
+  const p=(platform||"").toLowerCase()||"unknown";
+  const full=label||PLAT_FULL[p]||platform||"未知";
+  const short=PLAT_SHORT[p]||full;
+  return `<span class="ptag" data-plat="${esc(p)}" title="${esc(full)}">${esc(short)}</span>`;
+}
+
+/* R1.1：哪些账号当前有可用免费模型 —— 从 /free-forecast 拿 free_accounts，
+   在账号行标题后加 FREE 角标。结果缓存在 US.health，重绘不重复请求。 */
+async function loadForecast(){
+  if(US.health) return US.health;
+  try{ US.health=await getJSON("free-forecast"); }catch(e){ US.health={health:{free_accounts:{}}}; }
+  return US.health;
+}
+function paintFreeBadges(){
+  const fa=((US.health||{}).health||{}).free_accounts||{};
+  document.querySelectorAll(".row[data-acc]").forEach(row=>{
+    const label=row.dataset.acc;
+    const title=row.querySelector(".rtitle");
+    if(!title) return;
+    title.querySelectorAll(".freebadge").forEach(el=>el.remove());
+    const models=fa[label];
+    if(models&&models.length){
+      const badge=document.createElement("span");
+      badge.className="freebadge";
+      badge.textContent="FREE";
+      badge.title="当前可用免费模型："+models.join("、");
+      title.appendChild(badge);
+    }
+  });
+  // 异步回来后再补一次（首次进入时 forecast 可能还没加载）
+  if(!US.health) loadForecast().then(paintFreeBadges);
+}
+
+function accountRow(x){
+  const open=ACC.open.has(x.label);
+  x.disp=dispLabel(x.label);
+  const c=x.credits||{}, u=x.usage||{}, bt=u.bill_today||{};
+  // 24 小时块是异步渲染的（paintHours 拿不到这里的闭包），账单口径先存进 US.bill，
+  // 「两个口径差在哪」那块才能拿到同一个数。
+  if(bt&&bt.delta!=null) US.bill.set(x.label,bt); else US.bill.delete(x.label);
+  const used=c.used, cap=c.capacity, ratio=c.ratio;
+  // Qoder 的授权状态（P44）：能不能推理取决于官方 CLI 的本地登录态在不在，
+  // 不取决于凭据文件在不在——这是两件分开的事，页面上要分开说。
+  const isQ=x.platform==="qoder", q=x.qoder||{};
+  // R2.18：账号行副标题只讲「累计已用」，和右侧余额同一口径——
+  //   累计已用 + 余额 = 总额，一眼对得上（1.8 + 1998.2 = 2000）。
+  // 之前这里放「账单 −N」(今日 delta) 是错的：跨零点就归零，跟余额的累计口径天生对不上，
+  // 才闹出「账单 −0 却少了 1.8」的困惑。今日消耗挪到展开区（那里本来就有大字读数）。
+  const head=[
+    (used!=null) ? `已用 ${creditText(used)}` : null,
+  ].filter(Boolean).join(" · ");
+  // R2.1：只有真正不参与调度的账号才标注（Qoder 未授权）。
+  // 余额 0 不算——官方免费模型不消耗付费积分，余额 0 照样能用（服务器实调验证），
+  // 所以 WorkBuddy 余额 0 的账号仍参与调度，不在这里标「不参与」。
+  const noRoute = x.in_routing===false;
+  const routeNote = noRoute && isQ ? "未授权 · 不参与调度" : "";
+  let sub = head || (isQ
+      // 小字不再重复账号名（标题已经显示了）——之前是「已授权 · <掩码手机号>」，
+      // 同一行出现两次名字，把真正有用的信息挤到右边去了。
+      ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
+      : (x.auth_status==="ok"?"余额已读取":"状态未知"));
+  if(routeNote) sub = sub ? `${sub} · ${routeNote}` : routeNote;
+  const right = x.balance!=null
+    ? `<span class="bal">${creditText(x.balance)}<i>积分</i></span>`
+    : pill("余额未知","warn");
+  // Qoder 行的授权入口：未授权时是主操作，已授权时变成次要的「检查」。
+  const qbtn = isQ
+    ? (q.authorized
+        ? `<button type="button" class="qbtn" data-qcheck="${esc(x.label)}">检查</button>`
+        : `<button type="button" class="qbtn pri" data-qauth="${esc(x.label)}">授权</button>`)
+    : "";
+  const groups=(c.groups||[]).filter(g=>g.capacity>0||g.remain>0).map(g=>
+    `<div class="kv"><span>${esc(g.label)}</span><b>${creditText(g.remain)} / ${creditText(g.capacity)}</b></div>`
+  ).join("");
+  const delta=bt.delta;
+  // Qoder 展开后的授权区块（P44）
+  const qdetail = isQ ? `
+      <div class="sub2">Qoder 授权</div>
+      <div class="kv"><span>状态</span><b>${q.authorized?"已授权":"未授权"}</b></div>
+      <div class="kv"><span>账号</span><b>${esc(q.username||"—")}</b></div>
+      ${q.reason?`<div class="kv"><span>说明</span><b>${esc(q.reason)}</b></div>`:""}
+      <div class="kv"><span>登录态</span><b>${esc(q.auth_state||"—")}</b></div>
+      <button type="button" class="btn ${q.authorized?"secondary":""}" data-qauth="${esc(x.label)}"
+        style="margin-top:10px">${q.authorized?"重新授权":"授权"}</button>
+      <button type="button" class="btn secondary" data-qcheck="${esc(x.label)}"
+        style="margin-top:8px">检查授权并刷新余额</button>` : "";
+  const detail=`
+    <div class="detail">
+      <div class="sub2" style="margin-top:0">今日消耗</div>
+      <div class="ustat">
+        <div class="u1"><b class="${delta>0?"":"zero"}">${
+          delta!=null ? (delta>0?"−":"")+creditText(delta) : "—"}</b><em>积分</em></div>
+        <div class="u2">${esc(todayNote(bt))}</div>
+      </div>
+      <div class="sub2">24 小时 · 网关请求</div>
+      <div id="uh-${sid(x.label)}"><div class="uload">加载中…</div></div>
+      <div class="sub2">账单</div>
+      <div class="bar" aria-label="已用比例"><i style="width:${Math.min(100,Math.max(0,(ratio||0)*100)).toFixed(1)}%"></i></div>
+      <div class="barx"><span>已用 ${creditText(used)}</span><span>总量 ${creditText(cap)}</span></div>
+      <div class="kv"><span>剩余</span><b>${creditText(x.balance)} 积分${c.plan?" · "+esc(c.plan):""}</b></div>
+      ${groups}
+      ${qdetail}
+      <div class="sub2">凭据</div>
+      <div class="kv"><span>有效期</span><b>${esc(daysLeftText((x.credential||{}).expires_at))}</b></div>
+      <div class="kv"><span>文件</span><b>${esc((x.credential||{}).file||"—")}</b></div>
+      ${x.active?"":(x.inference===false?"":`<button class="btn secondary" data-switch="${esc(x.label)}" style="margin-top:10px">切换到此账号</button>`)}
+    </div>`;
+  return `<div class="row tap${x.active?" active":""}" data-acc="${esc(x.label)}">
+    <div class="rmain">
+      <div class="rtitle">${platBadge(x.platform,x.platform_label||x.platform)}${esc(x.disp||dispLabel(x.label))}</div>
+      <div class="rsub">${esc(sub)}</div>
+    </div>
+    <div class="rright">${right}${qbtn}${x.active?'<span class="tick">✓</span>':""}
+      <span class="cv${open?" open":""}">▶</span></div>
+  </div>${open?detail:""}`;
+}
+
+function addAccountCard(){
+  return `<div class="group"><div class="card">
+    <div class="row tap" id="addacc">
+      <div class="rmain"><div class="rtitle">添加账号</div>
+        <div class="rsub">扫码或粘贴 .info</div></div>
+      <div class="rright"><span class="plus">＋</span></div>
+    </div>
+  </div></div>`;
+}
+
+function renderAccounts(d){
+  const body=document.getElementById("body");
+  ACC.items=(d&&d.items)||[];
+  // P43：重绘（展开/折叠）时只传了 items，platforms 会丢 → 「平台」区块整块消失。
+  // 把上次拿到的 platforms 留在 ACC 里，重绘时继续用。
+  if(d&&d.platforms) ACC.platforms=d.platforms;
+  const plats=ACC.platforms||[];
+  if(!ACC.items.length){
+    body.innerHTML='<div class="empty">还没有账号</div>'+addAccountCard();
+    bindAccountActions(); return;
+  }
+  // 按剩余积分降序（用户要求）；余额未知的沉底，但保留在列表里
+  ACC.items=[...ACC.items].sort((a,b)=>{
+    const av=a.balance==null?-Infinity:a.balance, bv=b.balance==null?-Infinity:b.balance;
+    return bv-av;
+  });
+  let h="";
+  if(plats.length){
+    h+='<div class="group"><div class="ghead">平台</div><div class="card">';
+    for(const p of plats){
+      h+=`<div class="row"><div class="rmain"><div class="rtitle">
+        ${platBadge(p.platform,p.label)}${p.count} 个账号</div>
+        <div class="rsub">${p.routing>0
+          ? `${p.routing} 个可参与调度${p.active?" · 有当前账号":""}`
+          : "未参与调度（需要先授权）"}</div></div>
+        <div class="rright">${p.routing>0?pill(p.routing+" 个可用","ok"):pill("未参与","plain")}</div></div>`;
+    }
+    h+='</div></div>';
+  }
+  // R1.1：全账号汇总图表（low/high 叠加 + 维度/图形/模式切换）
+  // R1.6：汇总卡片内部加 padding——之前内容（日期/维度按钮、图表、模型分布）
+  // 紧贴 card 圆角边框，手机上像贴屏幕。单账号展开区有自己的 padding，不受影响。
+  h+='<div class="group"><div class="ghead">全部账号 · 用量汇总</div>'
+    +`<div class="card uh-summary-card"><div id="uh-${sid("__all__")}"><div class="uload">加载中…</div></div></div></div>`;
+  h+='<div class="group"><div class="ghead">账号 · 按剩余积分排序</div>';
+  h+='<div class="card">'+ACC.items.map(accountRow).join("")+'</div>';
+  h+=addAccountCard();
+  h+='<div class="note">今日消耗含官方客户端；24 小时仅本网关；余额不跨平台相加。</div>';
+  body.innerHTML=h;
+  bindAccountActions();
+  // 展开状态在重绘后要恢复：24 小时数据是异步拉的，单独填充到已经渲染好的容器里
+  for(const lb of ACC.open) paintHours(lb);
+  // R1.1：全账号汇总图表（独立于展开状态，每次进入账号页都加载）
+  paintHours("__all__");
+  // R1.1：账号行 FREE 角标（哪些账号当前有可用免费模型）
+  paintFreeBadges();
+}
+
+function bindAccountActions(){
+  document.querySelectorAll("[data-acc]").forEach(el=>el.addEventListener("click",e=>{
+    // 行内的操作按钮自己处理，不要顺带把行展开/折叠
+    if(e.target.closest("[data-switch],[data-qauth],[data-qcheck]")) return;
+    const label=el.dataset.acc;
+    if(ACC.open.has(label)) ACC.open.delete(label); else ACC.open.add(label);
+    renderAccounts({items:ACC.items});
+  }));
+  document.querySelectorAll("[data-switch]").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const label=btn.dataset.switch;
+    const ok=await dialog({
+      title:"切换到这个账号？",
+      rows:[["账号",label]],
+      confirmText:"切换",
+    });
+    if(!ok) return;
+    try{
+      await postJSON("account",{account:label});
+      toast("已切换到 "+label);
+      await refreshChip();
+      ACC.items=ACC.items.map(i=>({...i,active:i.label===label}));
+      renderAccounts({items:ACC.items});
+    }catch(err){ toast("切换失败："+err.message); }
+  }));
+  const add=document.getElementById("addacc");
+  if(add) add.addEventListener("click",()=>importDialog());
+  /* ---- Qoder 授权（P44）----
+     行内「授权」= 起一次设备码登录（弹二维码）；「检查」= 只查状态 + 刷余额。 */
+  document.querySelectorAll("[data-qauth]").forEach(btn=>btn.addEventListener("click",e=>{
+    e.stopPropagation();
+    qoderAuthDialog(btn.dataset.qauth);
+  }));
+  document.querySelectorAll("[data-qcheck]").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const label=btn.dataset.qcheck;
+    const old=btn.textContent;
+    btn.disabled=true; btn.textContent="检查中…";
+    try{
+      const r=await postJSON("qoder/probe?label="+encodeURIComponent(label),{});
+      const p=r.probe||{};
+      toast(p.authorized
+        ? `授权正常（${p.username||label}）${p.balance!=null?" · 余额 "+p.balance:""}`
+        : "还没授权："+(p.auth_reason||"登录态无效"));
+      await load("accounts");
+    }catch(err){
+      toast("检查失败："+err.message);
+      btn.disabled=false; btn.textContent=old;
+    }
+  }));
+}
+
+/* 添加账号弹窗：默认「扫码登录」，第二个 tab 才是粘贴 .info。
+   用户原话：「为啥我点击添加按钮只有一个输入框」——扫码本来就是官方唯一入口
+   （CLI 登录链接 + 轮询拿凭据），只是之前没做成页面。 */
+function importDialog(){
+  const ov=document.getElementById("overlay");
+  const box=document.getElementById("alert");
+  box.classList.add("wide");
+  box.innerHTML=`
+    <div class="head"><h2>添加账号</h2></div>
+    <div class="plattabs" role="tablist" id="platTabs">
+      <button role="tab" aria-selected="true" data-plat="wb">WorkBuddy</button>
+      <button role="tab" aria-selected="false" data-plat="qoder">Qoder</button>
+    </div>
+    <div id="paneWb">
+    <div class="platinfo">
+      <div class="pi-row"><span class="pi-k">接入</span><span>微信扫码登录 + 手机号验证，网关自动读取官方 CLI 凭据入库。到期前可自动续期，无需重扫。</span></div>
+      <div class="pi-row" style="margin-top:5px"><span class="pi-k">额度</span><span>扫码接入后<b>自带积分</b>（新号通常 <span class="pi-hot">2000</span>，部分 <span class="pi-hot">500</span>），直接可用于付费模型；免费模型另按请求长度免扣、不花积分。<b class="pi-ok">不用像 Qoder 那样换设备领试用</b>——这是两个平台最大的区别。</span></div>
+    </div>
+    <div class="imptabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="qr">扫码登录</button>
+      <button role="tab" aria-selected="false" data-tab="paste">粘贴 .info</button>
+    </div>
+    <div id="paneQr">
+      <div class="qrbox" id="qrBox"><div class="uload">正在向平台申请登录二维码…</div></div>
+      <div class="err" id="qrErr" style="padding:0 16px 12px"></div>
+    </div>
+    <div id="panePaste" hidden>
+      <div class="imp">
+        <textarea id="impText" placeholder='粘贴 .info 内容（以 {"account": 开头）' spellcheck="false"></textarea>
+        <div class="improw">
+          <label class="filebtn">选择 .info 文件<input id="impFile" type="file" accept=".info,.json,application/json" hidden></label>
+          <span id="impName" class="impname"></span>
+        </div>
+        <div id="impErr" class="err"></div>
+      </div>
+      <div class="acts" style="border-top:0;padding-top:0">
+        <button type="button" data-act="ok" class="primary">校验并添加</button>
+      </div>
+    </div>
+    <div class="acts" id="qrActs">
+      <button type="button" data-act="cancel">取消</button>
+    </div>
+    </div>
+
+    <div id="paneQoder" hidden>
+      <div class="platinfo">
+        <div class="pi-row"><span class="pi-k">接入</span><span>微信扫码 + 页面确认授权，网关自动建登录态、凭据、入库，扫完即可推理，不用再回账号页点「授权」。</span></div>
+        <div class="pi-row" style="margin-top:5px"><span class="pi-k">额度</span><span><b class="pi-warn">和 WorkBuddy 不同</b>：扫码后新号通常是 <b><span class="pi-hot">0 积分</span> / personal_standard</b>，因为<b>该账号尚未激活官方 Pro 试用</b>——需账号本人在<b>另一台设备</b>的 Qoder 客户端（IDE/CLI，非虚拟机）首次登录领取 <span class="pi-hot">300 Credits</span>，再来这里点账号行的「检查」刷新余额；同一设备/身份试用仅发一次。<b>扫码成功只代表接入成功，不代表有额度。</b></span></div>
+      </div>
+      <div class="qrbox" id="qBox"><div class="uload">正在向 Qoder 申请登录二维码…</div></div>
+      <div class="err" id="qErr" style="padding:0 16px 12px"></div>
+      <div class="acts">
+        <button type="button" data-act="cancelQ">关闭</button>
+      </div>
+    </div>`;
+
+  let timer=null, stopped=false, plat="wb";
+  let qTimer=null, qKey=null, qDrawn=null, qStarted=false;
+  const kill=async()=>{ try{ await postJSON("accounts/qr/cancel",{}); }catch(e){} };
+  const stopPoll=()=>{ clearInterval(timer); timer=null; };
+  const startPoll=()=>{ stopPoll(); if(!stopped) timer=setInterval(poll,1500); };
+  const stopQPoll=()=>{ clearInterval(qTimer); qTimer=null; };
+  const close=async ()=>{
+    stopped=true; stopPoll(); stopQPoll();
+    ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+    await kill();
+    if(qKey){ try{ await postJSON("qoder/authorize/cancel?key="+encodeURIComponent(qKey),{}); }catch(e){} }
+  };
+  const qrBox=()=>document.getElementById("qrBox");
+  const qrErr=()=>document.getElementById("qrErr");
+  const qBox=()=>document.getElementById("qBox");
+  const qErr=()=>document.getElementById("qErr");
+
+  /* 收起时把服务端的 pty 一起收掉，别留一个等登录的进程 */
+  box.querySelector('[data-act="cancel"]').onclick=close;
+  box.querySelector('[data-act="cancelQ"]').onclick=close;
+
+  /* ---------- 平台切换 ---------- */
+  /* WorkBuddy 和 Qoder 的二维码**不是一回事**（用户原话：「你是把二维码搞混了吗」）：
+     WorkBuddy 扫的是 CLI 登录链接（扫完导出 .info），
+     Qoder 扫的是设备码链接（扫完后端直接拿到 dt- 并落库）。
+     所以平台是**独立的一层**，不能塞进同一个 tab 组。 */
+  function switchPlat(p){
+    plat=p;
+    box.querySelectorAll("#platTabs [data-plat]").forEach(x=>
+      x.setAttribute("aria-selected",String(x.dataset.plat===p)));
+    document.getElementById("paneWb").hidden=(p!=="wb");
+    document.getElementById("paneQoder").hidden=(p!=="qoder");
+    if(p==="wb"){
+      // 切走了就把 Qoder 那边的登录进程收掉：每个 CLI 常驻 ~250MB，
+      // 服务器总共才 1.87GB，两个平台同时挂着会把内存吃穿。
+      stopQPoll();
+      if(qKey){ try{ postJSON("qoder/authorize/cancel?key="+encodeURIComponent(qKey),{}); }catch(e){} qKey=null; }
+      resume();
+    }else{
+      // 同理：WorkBuddy 的 pty 也没用了，收掉。
+      stopPoll(); kill();
+      if(!qStarted) beginQ();
+    }
+  }
+  box.querySelectorAll("#platTabs [data-plat]").forEach(t=>t.onclick=()=>switchPlat(t.dataset.plat));
+
+  /* ---------- Qoder：新增账号一条龙 ---------- */
+  /* 后端在 enroll 模式下会自己造凭据、建登录态、落库 —— 扫完就是可用账号，
+     不需要再去账号 tab 点「授权」。 */
+  function renderQ(s){
+    if(!s.url||s.url===qDrawn) return;
+    qDrawn=s.url;
+    qBox().innerHTML=`
+      ${s.qr?`<div class="qr" role="img" aria-label="Qoder 登录二维码">${s.qr}</div>`:""}
+      <div class="qrtip" id="qTip"></div>
+      <button type="button" class="btn secondary" id="qCopy">复制登录链接</button>
+      ${s.qr?`<button type="button" class="btn secondary" id="qShare">生成扫码分享卡片</button>`:""}`;
+    const cp=document.getElementById("qCopy");
+    if(cp) cp.onclick=async ()=>{
+      const ok=await copyText(s.url);
+      cp.textContent=ok?"已复制 ✓":"复制失败，可长按二维码";
+    };
+    const sh=document.getElementById("qShare");
+    if(sh) sh.onclick=()=>{
+      const svgEl=qBox().querySelector(".qr svg");
+      if(svgEl) showQrShareCard(svgEl.outerHTML,"qoder");
+    };
+  }
+
+  async function pollQ(){
+    if(stopped||plat!=="qoder"||!qKey) return;
+    let s;
+    try{ s=await getJSON("qoder/authorize/status?key="+encodeURIComponent(qKey)); }
+    catch(e){ return; }
+    if(stopped) return;
+    if(s.state==="done"){
+      stopQPoll();
+      qBox().innerHTML=`<div class="uload" style="color:var(--ok)">${esc(s.message||"账号已添加")}</div>`;
+      toast(s.message||"账号已添加");
+      setTimeout(async ()=>{
+        ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+        try{ await refreshChip(); }catch(e){}
+        load("accounts");
+      },1400);
+      return;
+    }
+    if(s.state==="error"||s.state==="expired"||s.state==="cancelled"){
+      stopQPoll();
+      qBox().innerHTML=`<div class="uload" style="color:var(--err)">${esc(s.message||"扫码没成功")}</div>
+        <button type="button" class="btn secondary" id="qRetry">重新获取二维码</button>`;
+      const rb=document.getElementById("qRetry");
+      if(rb) rb.onclick=()=>{ qStarted=false; qKey=null; beginQ(); };
+      return;
+    }
+    if(s.state==="idle"){ beginQ(); return; }
+    if(s.url) renderQ(s);
+    const t=document.getElementById("qTip");
+    if(t) t.textContent = s.expires_in
+      ? `还有 ${Math.floor(s.expires_in/60)} 分 ${s.expires_in%60} 秒失效`
+      : (s.message||"请扫码确认授权");
+  }
+
+  async function beginQ(){
+    qStarted=true;
+    qErr().textContent="";
+    qDrawn=null;
+    qBox().innerHTML='<div class="uload">正在向 Qoder 申请登录二维码…（约 5 秒）</div>';
+    let s;
+    try{
+      s=await postJSON("qoder/authorize?mode=enroll",{});
+    }catch(e){
+      qErr().textContent="申请失败："+e.message;
+      qStarted=false;
+      return;
+    }
+    if(stopped) return;
+    if(s.state==="error"){ qErr().textContent=s.message||"申请失败"; qStarted=false; return; }
+    qKey=s.key||null;
+    if(s.url) renderQ(s);
+    stopQPoll(); qTimer=setInterval(pollQ,1500);
+    pollQ();
+  }
+
+  /* tab 切换：只停/恢复轮询，不取消会话。
+     踩过的坑：切到「粘贴 .info」就 cancel，再切回来界面上还挂着那张二维码，
+     倒计时冻住、扫了完全没反应（服务端会话已经 idle）。用户根本不知道废了。 */
+  box.querySelectorAll(".imptabs [data-tab]").forEach(t=>t.onclick=()=>{
+    const qr=t.dataset.tab==="qr";
+    box.querySelectorAll(".imptabs [data-tab]").forEach(x=>
+      x.setAttribute("aria-selected",String((x.dataset.tab==="qr")===qr)));
+    document.getElementById("paneQr").hidden=!qr;
+    document.getElementById("panePaste").hidden=qr;
+    document.getElementById("qrActs").hidden=!qr;
+    if(qr) resume(); else stopPoll();
+  });
+
+  /* 切回扫码页：会话还在就接着轮询，真没了（超时/被取消/进程退出）就重新申请一张 */
+  async function resume(){
+    let s=null;
+    try{ s=await getJSON("accounts/qr/status"); }catch(e){ s=null; }
+    if(stopped) return;
+    if(s && (s.state==="starting"||s.state==="waiting"||s.state==="done")){
+      if(s.url) renderQr(s);
+      startPoll(); poll();
+      return;
+    }
+    begin();
+  }
+
+  /* 记「已经画过哪个链接」，而不是画过没有：会话重开/链接换新时要能重画，
+     同一个链接重复 poll 时不能白重排 DOM（否则二维码每 1.5 秒闪一次）。 */
+  let qrDrawn=null;
+  function renderQr(s){
+    if(!s.url||s.url===qrDrawn) return;
+    qrDrawn=s.url;
+    qrBox().innerHTML=`
+      ${s.qr?`<div class="qr" role="img" aria-label="登录二维码">${s.qr}</div>`:""}
+      <div class="qrtip" id="qrLeft">${s.expires_in?`还有 ${Math.floor(s.expires_in/60)} 分 ${s.expires_in%60} 秒失效`:""}</div>
+      <button type="button" class="btn secondary" id="qrCopy">复制登录链接</button>
+      ${s.qr?`<button type="button" class="btn secondary" id="qrShare">生成扫码分享卡片</button>`:""}`;
+    const cp=document.getElementById("qrCopy");
+    if(cp) cp.onclick=async ()=>{
+      try{ await navigator.clipboard.writeText(s.url); cp.textContent="已复制 ✓"; }
+      catch(e){ cp.textContent="复制失败，可长按二维码"; }
+    };
+    const sh=document.getElementById("qrShare");
+    if(sh) sh.onclick=()=>{
+      const svgEl=qrBox().querySelector(".qr svg");
+      if(svgEl) showQrShareCard(svgEl.outerHTML,"workbuddy");
+    };
+  }
+
+  function qrDead(msg){
+    stopPoll();
+    qrDrawn=null;
+    qrBox().innerHTML=`<div class="uload" style="color:var(--err)">${esc(msg)}</div>
+      <button type="button" class="btn secondary" id="qrRetry">重新获取二维码</button>`;
+    const rb=document.getElementById("qrRetry");
+    if(rb) rb.onclick=begin;
+  }
+
+  async function poll(){
+    if(stopped) return;
+    let s;
+    try{ s=await getJSON("accounts/qr/status"); }catch(e){ return; }  // 轮询失败静默重试
+    if(stopped) return;
+    if(s.state==="done"&&s.content){
+      stopPoll();
+      qrBox().innerHTML='<div class="uload">已登录，正在导入账号…</div>';
+      try{
+        const r=await postJSON("accounts/import",{content:s.content});
+        await kill();
+        stopped=true;
+        ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+        toast("已添加："+(r.account&&r.account.label||"账号"));
+        await refreshChip();
+        load("accounts");
+      }catch(e){
+        qrErr().textContent="导入失败："+e.message;
+      }
+      return;
+    }
+    if(s.state==="expired"||s.state==="error"){
+      qrDead(s.message||"二维码已失效");
+      return;
+    }
+    if(s.state==="idle"){
+      // 服务端会话没了（被人 cancel、被重启、或超过 5 分钟自己收摊）。
+      // 这时候界面上那张码是死的，必须说清楚，不能让用户对着废码干等。
+      qrDead("会话已结束，重新获取二维码");
+      return;
+    }
+    if(s.url) renderQr(s);
+    const t=document.getElementById("qrLeft");
+    if(t&&s.expires_in) t.textContent="还有 "+Math.floor(s.expires_in/60)+" 分 "+(s.expires_in%60)+" 秒失效";
+  }
+
+  async function begin(){
+    qrErr().textContent="";
+    qrDrawn=null;
+    qrBox().innerHTML='<div class="uload">正在向平台申请登录二维码…（约 10 秒）</div>';
+    let s;
+    try{
+      s=await postJSON("accounts/qr/start",{});
+    }catch(e){
+      qrErr().textContent="申请失败："+e.message;
+      return;
+    }
+    if(stopped) return;
+    if(s.state==="error"){
+      qrDead(s.message||"申请失败");
+      return;
+    }
+    if(s.url) renderQr(s);
+    startPoll();
+    poll();
+  }
+
+  /* 粘贴方式 */
+  document.getElementById("impFile").onchange=e=>{
+    const f=e.target.files&&e.target.files[0];
+    if(!f) return;
+    document.getElementById("impName").textContent=f.name;
+    const rd=new FileReader();
+    rd.onload=()=>{ document.getElementById("impText").value=String(rd.result||""); };
+    rd.readAsText(f);
+  };
+  box.querySelector('[data-act="ok"]').onclick=async ()=>{
+    const content=document.getElementById("impText").value.trim();
+    const err=document.getElementById("impErr");
+    if(!content){ err.textContent="先把凭据内容贴进来"; return; }
+    const btn=box.querySelector('[data-act="ok"]');
+    btn.disabled=true; btn.textContent="校验中…";
+    try{
+      const r=await postJSON("accounts/import",{content});
+      stopped=true; clearInterval(timer);
+      ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+      toast("已添加："+(r.account&&r.account.label||"账号"));
+      await refreshChip();
+      load("accounts");
+    }catch(e){
+      err.textContent=e.message;
+      btn.disabled=false; btn.textContent="校验并添加";
+    }
+  };
+
+  ov.classList.add("show");
+  begin();
+}
+
+
+/* ==================== Qoder 授权（P44）====================
+   官方 CLI 的设备码登录。跟 WorkBuddy 那套扫码同构，但有两个差别：
+   1. 设备码只有 5 分钟有效期 —— 过期后**后端会自动换一个新的**，
+      所以前端只要盯着「URL 变了就重画」，不用管过期这件事。
+   2. 授权成功后**不需要再点一次确认** —— 后端自己校验身份、刷余额、落库。 */
+function qoderAuthDialog(label){
+  const ov=document.getElementById("overlay");
+  const box=document.getElementById("alert");
+  box.classList.add("wide");
+  box.innerHTML=`
+    <div class="head"><h2>授权 Qoder 账号</h2>
+      <div class="msg">${esc(dispLabel(label))} · 在 Qoder 网页上确认授权</div></div>
+    <div class="qrbox" id="qBox"><div class="uload">正在向 Qoder 申请授权链接…</div></div>
+    <div class="err" id="qErr" style="padding:0 16px 12px"></div>
+    <div class="acts">
+      <button type="button" data-act="cancel">关闭</button>
+    </div>`;
+
+  let timer=null, stopped=false, qrDrawn=null, key=label;
+  const qBox=()=>document.getElementById("qBox");
+  const qErr=()=>document.getElementById("qErr");
+  const stopPoll=()=>{ clearInterval(timer); timer=null; };
+  const close=()=>{
+    stopped=true; stopPoll();
+    ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+    // 顺手把服务器上等着的登录进程收掉，别留一堆 250MB 的 CLI 挂在那儿
+    try{ postJSON("qoder/authorize/cancel?key="+encodeURIComponent(key),{}); }catch(e){}
+  };
+  box.querySelector('[data-act="cancel"]').onclick=close;
+
+  function renderQr(s){
+    if(!s.url||s.url===qrDrawn) return;
+    qrDrawn=s.url;
+    qBox().innerHTML=`
+      ${s.qr?`<div class="qr" role="img" aria-label="Qoder 授权二维码">${s.qr}</div>`:""}
+      <div class="qrtip" id="qTip"></div>
+      <button type="button" class="btn secondary" id="qCopy">复制授权链接</button>
+      ${s.qr?`<button type="button" class="btn secondary" id="qShare">生成扫码分享卡片</button>`:""}`;
+    const cp=document.getElementById("qCopy");
+    if(cp) cp.onclick=async ()=>{
+      const ok=await copyText(s.url);
+      cp.textContent=ok?"已复制 ✓":"复制失败，可长按二维码";
+    };
+    const sh=document.getElementById("qShare");
+    if(sh) sh.onclick=()=>{
+      const svgEl=qBox().querySelector(".qr svg");
+      if(svgEl) showQrShareCard(svgEl.outerHTML,"qoder");
+    };
+  }
+
+  async function poll(){
+    if(stopped) return;
+    let s;
+    try{ s=await getJSON("qoder/authorize/status?key="+encodeURIComponent(key)); }
+    catch(e){ return; }                       // 轮询失败静默重试
+    if(stopped) return;
+    if(s.state==="done"){
+      stopPoll();
+      qBox().innerHTML=`<div class="uload" style="color:var(--ok)">${esc(s.message||"授权成功")}</div>`;
+      toast("授权成功");
+      setTimeout(async ()=>{
+        ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
+        try{ await refreshChip(); }catch(e){}
+        load("accounts");
+      },1200);
+      return;
+    }
+    if(s.state==="error"||s.state==="expired"||s.state==="cancelled"){
+      stopPoll();
+      qBox().innerHTML=`<div class="uload" style="color:var(--err)">${esc(s.message||"授权没成功")}</div>
+        <button type="button" class="btn secondary" id="qRetry">重新获取</button>`;
+      const rb=document.getElementById("qRetry");
+      if(rb) rb.onclick=begin;
+      return;
+    }
+    if(s.state==="idle"){
+      // 服务端会话没了（服务重启过、或被人 cancel）。
+      // 直接自己重开一轮 —— 用户不该为了一次重启再点一次按钮。
+      begin();
+      return;
+    }
+    if(s.url) renderQr(s);
+    const t=document.getElementById("qTip");
+    if(t) t.textContent = s.expires_in
+      ? `还有 ${Math.floor(s.expires_in/60)} 分 ${s.expires_in%60} 秒失效`
+      : (s.message||"正在等待授权…");
+  }
+
+  async function begin(){
+    qErr().textContent="";
+    qrDrawn=null;
+    qBox().innerHTML='<div class="uload">正在向 Qoder 申请授权链接…（约 5 秒）</div>';
+    let s;
+    try{
+      s=await postJSON("qoder/authorize?label="+encodeURIComponent(label),{});
+    }catch(e){
+      qErr().textContent="申请失败："+e.message;
+      return;
+    }
+    if(stopped) return;
+    if(s.state==="error"){ qErr().textContent=s.message||"申请失败"; return; }
+    // 后端可能把会话换成新的 key（新增账号模式下账号名还不知道，
+    // 用的是 new:<uuid> 这种临时 key）—— 后续轮询必须跟着换。
+    key=s.key||key;
+    if(s.url) renderQr(s);
+    stopPoll(); timer=setInterval(poll,1500);
+    poll();
+  }
+
+  ov.classList.add("show");
+  begin();
+}
+
+
+/* ==================== 安全 ==================== */
+let SEC=null;   /* 最近一次的 /security 快照（改邮箱时要用当前值） */
+/* 同一台设备反复打开会刷出一排一模一样的记录，按「IP + 原因 + 小时」折叠成一条 */
+function dedupeEvents(list){
+  const seen=new Map();
+  for(const e of list){
+    const hour=Math.floor((e.created_at||0)/3600);
+    const key=`${e.ip}|${e.reason}|${hour}`;
+    const cur=seen.get(key);
+    if(cur) cur.n=(cur.n||1)+1;
+    else seen.set(key,{...e,n:1});
+  }
+  return [...seen.values()].slice(0,6);
+}
+function renderSecurity(d){
+  SEC=d;
+  const body=document.getElementById("body");
+  if(!d||!d.session){ patchDOM(body,'<div class="empty">暂时取不到会话信息</div>'); return; }
+  const s=d.session, p=d.policy||{};
+  const hrs=n=>n>=86400?(n/86400)+" 天":(n>=3600?(n/3600)+" 小时":Math.round(n/60)+" 分钟");
+  let h='<div class="group"><div class="ghead">本设备会话</div><div class="card">';
+  h+=`<div class="row"><div class="rmain"><div class="rtitle">已登录</div>
+    <div class="rsub">IP ${esc(s.ip||"—")} · 登录于 ${esc(fmtMD(s.created_at))}</div></div>
+    <div class="rright">${pill("有效","ok")}</div></div>`;
+  h+=`<div class="row"><div class="rmain"><div class="rtitle">有效至 ${esc(fmtMD(s.expires_at))}</div>
+    <div class="rsub">${hrs(p.idle_ttl)}不活跃失效 · 最长 ${hrs(p.max_ttl)}</div>
+    </div></div>`;
+  h+=`<div class="row tap" id="logout"><div class="rmain"><div class="rtitle" style="color:var(--err)">退出这台设备</div>
+    <div class="rsub">只作废本浏览器</div></div></div>`;
+  h+='</div></div>';
+
+  /* P20：邮件找回 —— 换了设备/清了 Cookie 也能进来，不用翻 .env 找口令 */
+  const em=d.email||{}, ml=d.mail||{};
+  h+='<div class="group"><div class="ghead">邮件找回</div><div class="card">';
+  h+=`<div class="row tap" id="emailEdit"><div class="rmain">
+    <div class="rtitle">收件邮箱</div>
+    <div class="rsub">${em.value?esc(em.masked):"还没设置 —— 点这里填一个"}</div></div>
+    <div class="rright">${pill(em.value?"修改":"设置",em.value?"ok":"warn")}</div></div>`;
+  h+=`<div class="row"><div class="rmain"><div class="rtitle">发信服务器</div>
+    <div class="rsub wrap">${ml.configured
+      ? esc(ml.host+":"+ml.port)+" · 用 "+esc(ml.user)+" 发信"
+      : "还没配置 SMTP —— 点下一行填写"}</div></div>
+    <div class="rright">${pill(ml.configured?"已配置":"未配置",ml.configured?"ok":"err")}</div></div>`;
+  h+=`<div class="row tap" id="smtpEdit"><div class="rmain"><div class="rtitle">SMTP 配置</div>
+    <div class="rsub">主机 / 端口 / 账号 / 授权码 / 收件相关</div></div>
+    <div class="rright"><span class="mono">→</span></div></div>`;
+  h+=`<div class="row tap" id="emailTest"><div class="rmain"><div class="rtitle">发一封测试邮件</div>
+    <div class="rsub">${em.ready ? "" : "先填邮箱并配置 SMTP"}</div></div>
+    <div class="rright"><span class="mono">→</span></div></div>`;
+  h+='</div></div>';
+
+  const logins=dedupeEvents(d.logins||[]);
+  h+='<div class="group"><div class="ghead">最近登录</div><div class="card scroll-list">';
+  if(!logins.length) h+='<div class="empty">没有记录</div>';
+  for(const e of logins) h+=`<div class="row"><div class="rmain">
+    <div class="rtitle">${esc(e.ip||"—")}${e.n>1?`<span class="pill plain">${e.n} 次</span>`:""}</div>
+    <div class="rsub">${esc(fmtMD(e.created_at))} · ${esc((e.path||"").slice(0,28))}</div>
+    </div><div class="rright">${pill("成功","ok")}</div></div>`;
+  h+='</div></div>';
+
+  const fails=dedupeEvents(d.failures||[]);
+  h+='<div class="group"><div class="ghead">失败尝试</div><div class="card scroll-list">';
+  if(!fails.length) h+='<div class="empty">没有失败记录</div>';
+  for(const e of fails) h+=`<div class="row"><div class="rmain">
+    <div class="rtitle">${esc(e.ip||"—")}${e.n>1?`<span class="pill plain">${e.n} 次</span>`:""}</div>
+    <div class="rsub">${esc(fmtMD(e.created_at))} · ${esc(e.reason||"")}</div>
+    </div><div class="rright">${pill("拒绝","err")}</div></div>`;
+  h+='</div></div>';
+
+  const blocked=(d.blocked||[]);
+  if(blocked.length){
+    h+='<div class="group"><div class="ghead">封禁中</div><div class="card scroll-list">';
+    for(const b of blocked) h+=`<div class="row"><div class="rmain">
+      <div class="rtitle">${esc(b.ip)}</div>
+      <div class="rsub">失败 ${b.n} 次 · 解封时间 ${esc(fmtMD(b.until))}</div></div>
+      <div class="rright"><button class="mini" data-unban="${esc(b.ip)}">解除</button></div></div>`;
+    h+='</div></div>';
+  }
+  patchDOM(body,h);
+  bindSecurity();
+}
+
+function bindSecurity(){
+  const out=document.getElementById("logout");  if(out) out.onclick=async ()=>{
+    const ok=await dialog({title:"退出登录？",message:"需要重新输口令才能进来。",
+      confirmText:"退出",danger:true});
+    if(!ok) return;
+    const f=document.createElement("form");
+    f.method="post"; f.action=PREFIX+"/admin/logout";
+    document.body.appendChild(f); f.submit();
+  };
+  document.querySelectorAll("[data-unban]").forEach(btn=>btn.onclick=async ()=>{
+    const ip=btn.dataset.unban;
+    const ok=await dialog({title:"解除封禁？",message:"解除后该 IP 可以重新尝试登录。",
+      rows:[["IP",ip]],confirmText:"解除"});
+    if(!ok) return;
+    try{ await postJSON("security/unban",{ip}); toast("已解除 "+ip); load("security"); }
+    catch(e){ toast("解除失败："+e.message); }
+  });
+
+  /* P20：改收件邮箱 / 发测试邮件 */
+  const edit=document.getElementById("emailEdit");
+  if(edit) edit.onclick=async ()=>{
+    const cur=(SEC&&SEC.email&&SEC.email.value)||"";
+    const addr=await inputDialog({
+      title:"收件邮箱",
+      label:"邮箱地址", value:cur, placeholder:"you@example.com", type:"email"});
+    if(addr===null) return;
+    try{
+      const r=await postJSON("security/email",{email:addr});
+      toast(r.email?("已设为 "+r.masked):"已清空收件邮箱");
+      load("security");
+    }catch(e){ toast("保存失败："+e.message); }
+  };
+  const t=document.getElementById("emailTest");
+  if(t) t.onclick=async ()=>{
+    toast("正在发…");
+    try{
+      const r=await postJSON("security/email/test",{});
+      toast(r.ok ? ("已发到 "+r.to+"，去收件箱看看") : ("没发出去："+r.message));
+    }catch(e){ toast("发信失败："+e.message); }
+  };
+  const se=document.getElementById("smtpEdit");
+  if(se) se.onclick=async ()=>{
+    let cfg=(SEC&&SEC.mail)||{};
+    try{ cfg=await getJSON("mail-settings")||cfg; }catch(e){}
+    const v=await smtpDialog(cfg);
+    if(v===null) return;
+    /* 授权码留空就不提交该字段，后端会保留原值 */
+    const payload={smtp_host:v.smtp_host,smtp_port:v.smtp_port,smtp_user:v.smtp_user,
+      smtp_from:v.smtp_from,smtp_ssl:v.smtp_ssl};
+    if(v.smtp_password) payload.smtp_password=v.smtp_password;
+    try{
+      await postJSON("mail-settings",payload);
+      toast("SMTP 配置已保存");
+      load("security");
+    }catch(e){ toast("保存失败："+e.message); }
+  };
+}
+
+/* ==================== 记录 ==================== */
+/* R1：调度切换——从「长列表」改成「关系图谱」。
+   同一份 switch-history 数据（连续相同 账号+模型 折叠成段），两种视角：
+   - 桑基图：每条彩带 = 一次真实的「从谁跳到谁」，粗细=次数，悬停高亮整条链；
+   - 时间轴回放：横轴时间、纵轴账号，播放时逐段高亮并显示切换原因（reason 落库原值）。
+   规范：Apple HIG Lists（固定可视区）+ ECharts 官方 sankey/custom 用法。
+   平台色沿用固定值（与 .ptag 一致）：WB #0A62C4 / Qoder #8944AB。
+   canvas 读不到 CSS 变量，颜色在 JS 里按当前主题显式取。 */
+/* R1.5：默认视图 = "recent"（最近使用模型列表），用户要据此判断 low/high 实际调用。 */
+let SW={segs:[],view:"recent",timer:null,idx:0,chart:null,bound:false,filter:"free",hidden:0,
+  range:0};   // R2.28：时间轴范围（秒）：0=全部 / 300=近5分钟 / 3600=近1小时
+
+function swName(s){ return (s.account?dispLabel(s.account):"—")+" · "+(s.model||"—"); }
+/* R1.2：平台角标前缀 —— canvas 里塞不进 HTML 角标，用「WB 」/「QD 」前缀实现同样的
+   一眼可辨效果（颜色也按平台固定，悬停 tooltip 里给全称）。 */
+function swPlatTag(s){
+  const p=(s&&s.platform||"").toLowerCase();
+  return p==="workbuddy"?"WB ":(p==="qoder"?"QD ":"");
+}
+function swLabel(s){ return swPlatTag(s)+swName(s); }
+/* R1.4：免费池 / 付费池 —— 按**模型粒度**判定，不是按单次扣费。
+   免费池 = costmodel.robust_free 判定的真免费模型（线上只有 hy4flash-free）；
+   扣费模型（哪怕短请求偶尔免费）都属于付费池。用户拍板：扣了费就不是免费模型。 */
+function swInFreePool(s){ return !!(s&&s.in_free_pool); }
+function swPoolText(s){ return swInFreePool(s)?"免费池":"付费池"; }
+function swColor(s){
+  const p=(s.platform||"").toLowerCase();
+  if(p==="workbuddy") return "#0A62C4";
+  if(p==="qoder") return "#8944AB";
+  return "#8E8E93";
+}
+function swTheme(){
+  const dark=document.documentElement.dataset.theme==="dark" ||
+    (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme:dark)").matches);
+  return {dark,text:dark?"#E8E8E8":"#2C2C2A",sub:dark?"#98989D":"#6E6E73",
+    grid:dark?"rgba(255,255,255,.12)":"rgba(0,0,0,.10)"};
+}
+
+/* R1.3/R1.4：按「免费池 / 付费池 / 全部」过滤切换段。
+   用户明确：流向图应只展示**免费池之间的轮询调度**（4 个账号 × hy4flash-free），
+   不混付费模型。默认只看免费池；付费池单独可查。 */
+function swFilterSegs(){
+  // R2.26：数据源已是最近 7 天全量，但桑基图/时间轴只画最近 300 段——
+  // 一周上千段全画会挤成一团。切片放在这里（图表专用），最近使用列表
+  // (swDrawRecent 用 SW.segs) 仍能聚合到一周前的 high 调用。
+  const all=(SW.segs||[]).slice(0,300);
+  if(SW.filter==="all") return all;
+  if(SW.filter==="free") return all.filter(swInFreePool);
+  if(SW.filter==="paid") return all.filter(s=>!swInFreePool(s));
+  return all;
+}
+/* R2.30：时间范围过滤抽公共函数——流向图与时间轴共用同一口径。
+   SW.range（秒）：0=全部 / 300=近5分钟 / 3600=近1小时；按段的最后活动时间过滤。
+   Date.now() 实时计算 → liveRefresh 每 5 秒重绘时窗口自动向前滚动（实时效果）。 */
+function swRangeSegs(){
+  let seq=swFilterSegs();
+  if(SW.range>0){
+    const cutoff=Date.now()/1000-SW.range;
+    seq=seq.filter(s=>(s.last_at||s.first_at||0)>=cutoff);
+  }
+  return seq;
+}
+function swPoolCounts(){
+  const c={free:0,paid:0};
+  for(const s of (SW.segs||[])) c[swInFreePool(s)?"free":"paid"]++;
+  return c;
+}
+
+function switchHistoryHTML(segs){
+  // body 每次重渲染，DOM 都是新节点：旧图表实例已失效 → 先复位
+  if(SW.timer){clearInterval(SW.timer);SW.timer=null;}
+  if(SW.chart){SW.chart.dispose();SW.chart=null;}
+  SW.bound=false;
+  if(!segs||!segs.length){ SW.segs=[]; return ""; }
+  SW.segs=segs; SW.idx=0;
+  const tc=swPoolCounts();
+  // R2.34：池占比——绿色=免费池、灰色=付费池，做成「全部」按钮内的迷你堆叠条。
+  // 小屏隐藏数字后比例条仍在，一眼看出 free/paid 占比（用户要看的是比例不是绝对数）。
+  const total=tc.free+tc.paid||1;
+  const freePct=Math.round(tc.free/total*100);
+  return `<div class="group">
+    <div class="ghead">调度切换 · 最近 ${segs.length} 段 <span class="count">（点图看每一次跳转）</span></div>
+    <div class="hseg" id="swSeg" style="margin-bottom:6px">
+      <button type="button" data-swview="recent" aria-pressed="${SW.view==="recent"?"true":"false"}">最近使用</button>
+      <button type="button" data-swview="flow" aria-pressed="${SW.view==="flow"?"true":"false"}">流向图</button>
+      <button type="button" data-swview="time" aria-pressed="${SW.view==="time"?"true":"false"}">时间轴回放</button>
+    </div>
+    <!-- R2.32：范围与池过滤合并成一行——范围在前、池在后，播放按钮行尾（仅时间轴用）。
+         两者本就只在 flow/time 出现、recent 都隐藏，合并无功能影响。窄屏压缩边距 +
+         overflow-x:auto 兜底，避免一行放不下把按钮挤没。 -->
+    <div id="swBar" class="sw-bar" style="margin-bottom:10px;${SW.view==="recent"?"display:none":"display:flex"}">
+      <span class="swrange-label">范围</span>
+      <div class="hseg" id="swRange">
+        <button type="button" data-swrange="300" aria-pressed="${SW.range===300?"true":"false"}">近5分钟</button>
+        <button type="button" data-swrange="3600" aria-pressed="${SW.range===3600?"true":"false"}">近1小时</button>
+        <button type="button" data-swrange="0" aria-pressed="${SW.range===0?"true":"false"}">全部</button>
+      </div>
+      <div class="hseg" id="swFilter">
+        <button type="button" data-swfilter="free" aria-pressed="${SW.filter==="free"?"true":"false"}" title="免费池 ${tc.free} 段">免费池<span class="swcnt"> ${tc.free}</span></button>
+        <button type="button" data-swfilter="paid" aria-pressed="${SW.filter==="paid"?"true":"false"}" title="付费池 ${tc.paid} 段">付费池<span class="swcnt"> ${tc.paid}</span></button>
+        <button type="button" data-swfilter="all" aria-pressed="${SW.filter==="all"?"true":"false"}" title="共 ${segs.length} 段 · 免费池 ${tc.free}（${freePct}%）· 付费池 ${tc.paid}">全部<span class="swcnt"> ${segs.length}</span><span class="swmix" aria-hidden="true"><i style="width:${freePct}%"></i></span></button>
+      </div>
+      <button type="button" class="swPlayInline" id="swPlay" title="播放/暂停回放" aria-label="播放回放"
+        style="${SW.view==="time"?"display:inline-flex":"display:none"}"></button>
+    </div>
+    <div id="swFoldHint" class="sw-fold-hint" style="display:none"></div>
+    <div id="swRecentList" class="card scroll-list" style="${SW.view==="recent"?"display:block":"display:none"};margin-bottom:8px"></div>
+    <div class="chart-box" id="swChartBox" style="${SW.view==="recent"?"display:none":"display:block"}">
+      <div id="swChart" style="width:100%;height:100%"></div>
+    </div>
+    <div class="sw-controls" id="swControls" style="${SW.view==="time"?"display:flex":"display:none"}">
+      <span id="swStep" style="font-size:13px;color:var(--label-2)"></span>
+      <span id="swDesc" style="font-size:13px;color:var(--label-3)"></span>
+    </div>
+    <details style="margin-top:10px"><summary style="font-size:13px;color:var(--label-3);cursor:pointer">展开文字明细</summary>
+      <div class="card scroll-list" style="margin-top:8px">${segs.slice(0,60).map(s=>{
+        const src=s.switched_from?`← ${esc(swLabel(s.switched_from))}`:'起点';
+        const bad=s.errors?` · <span style="color:var(--err)">${s.errors} 次失败</span>`:"";
+        const reason=String(s.reason||"调度器选择").replace(/\d+\.\d{6,}/g,m=>num(Number(m)));
+        return `<div class="swrow"><div class="swmain"><div class="swtitle">${src} <b>${esc(swLabel(s))}</b> <span class="swtier t-${swInFreePool(s)?"free":"paid"}">${swPoolText(s)}</span></div>
+          <div class="swsub">${fmtShort(s.first_at)} · ${s.requests} 次${bad}${s.credit!=null&&s.credit>0?(" · 扣 "+num(s.credit)+" 积分"):""}</div>
+          <div class="swreason">${esc(reason)}</div></div></div>`;
+      }).join("")}</div>
+    </details></div>`;
+}
+
+function swInitChart(){
+  bindSwEvents();
+  if(SW.view==="recent"){ swDrawRecent(); return; }
+  if(!window.echarts||!SW.segs.length) return;
+  const el=document.getElementById("swChart"); if(!el) return;
+  // flow / time 两个视图共用同一个实例：切换时只换 option，不再 init 第二个实例抢同一个 DOM
+  if(!SW.chart) SW.chart=echarts.init(el,swTheme().dark?"dark":null);
+  SW.chart.resize();
+  swDraw();
+}
+function bindSwEvents(){
+  if(SW.bound) return; SW.bound=true;
+  document.querySelectorAll("[data-swview]").forEach(b=>b.addEventListener("click",()=>{
+    SW.view=b.dataset.swview;
+    document.querySelectorAll("[data-swview]").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+    const recent=SW.view==="recent";
+    const box=document.getElementById("swChartBox");
+    const list=document.getElementById("swRecentList");
+    if(box) box.style.display=recent?"none":"block";
+    if(list) list.style.display=recent?"block":"none";
+    const ctl=document.getElementById("swControls"); if(ctl) ctl.style.display=SW.view==="time"?"flex":"none";
+    // R2.32：范围+池过滤合并为 swBar，recent 隐藏、flow/time 显示（整行一起切）
+    const bar=document.getElementById("swBar"); if(bar) bar.style.display=recent?"none":"flex";
+    // 播放按钮仍仅时间轴回放用
+    const playBtn=document.getElementById("swPlay");
+    if(playBtn){ playBtn.style.display=SW.view==="time"?"inline-flex":"none"; paintPlayBtn("play"); }
+    stopReplay();
+    SW.idx=0;
+    if(recent){ swDrawRecent(); return; }
+    // R1.7 修复：默认视图是「最近使用」，swInitChart() 首屏就因 recent 提前 return，
+    // 从不 init ECharts。从 recent 切到 flow/time 时 SW.chart 仍为空，swDrawFlow()
+    // 的 `if(!c) return` 让整图画空白。切非 recent 视图前按需补一次 init。
+    if(!SW.chart && window.echarts && SW.segs.length){
+      const el=document.getElementById("swChart");
+      if(el) SW.chart=echarts.init(el,swTheme().dark?"dark":null);
+    }
+    if(SW.chart) SW.chart.resize();
+    swDraw();
+  }));
+  document.querySelectorAll("[data-swfilter]").forEach(b=>b.addEventListener("click",()=>{
+    SW.filter=b.dataset.swfilter;
+    document.querySelectorAll("[data-swfilter]").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+    stopReplay();
+    SW.idx=0;
+    swDraw();
+  }));
+  // R2.28：时间范围切换——按 last_at 过滤最近 N 秒的段，近5分钟看实时变化
+  document.querySelectorAll("[data-swrange]").forEach(b=>b.addEventListener("click",()=>{
+    SW.range=Number(b.dataset.swrange)||0;
+    document.querySelectorAll("[data-swrange]").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+    stopReplay();
+    SW.idx=0;
+    paintPlayBtn("play");
+    swDraw();
+  }));
+  const play=document.getElementById("swPlay");
+  if(play) play.addEventListener("click",()=>{
+    if(SW.timer){ stopReplay(); paintPlayBtn("play"); return; }  // 播放中 → 暂停
+    const n=swFilterSegs().length;
+    if(!n) return;
+    if(SW.idx>=n-1) SW.idx=0;
+    paintPlayBtn("pause");
+    SW.timer=setInterval(()=>{
+      SW.idx++;
+      if(SW.idx>=n){ stopReplay(); paintPlayBtn("replay"); return; }
+      swDraw();
+    },1300);
+  });
+}
+/* R2.28：回放控制——按钮只放图内小圆钮，SVG 单色图标（无 emoji）。 */
+function stopReplay(){ if(SW.timer){clearInterval(SW.timer);SW.timer=null;} }
+function paintPlayBtn(mode){
+  const b=document.getElementById("swPlay"); if(!b) return;
+  const playing=mode==="pause";
+  b.innerHTML=playing?SVG_PAUSE:SVG_PLAY;
+  b.setAttribute("aria-pressed",String(playing));
+  b.setAttribute("aria-label",playing?"暂停回放":(mode==="replay"?"重新播放":"播放回放"));
+  b.title=playing?"暂停":(mode==="replay"?"重新播放":"播放");
+}
+function swDraw(){
+  if(SW.view==="recent") swDrawRecent();
+  else if(SW.view==="flow") swDrawFlow();
+  else swDrawTime();
+}
+/* R2.5：图表尺寸按容器宽度自适应——手机端 342px 容器里，写死的
+   sankey left/right=170（或 grid.left=130）会吃掉几乎全部宽度，节点/彩带
+   被挤成中间一竖条。这里统一算「侧边标签宽度」：窄屏收紧、宽屏维持原值。 */
+function swChartW(){
+  const el=document.getElementById("swChart");
+  return el?Math.round(el.getBoundingClientRect().width):600;
+}
+function swCompact(){ return swChartW()<500; }
+/* R2.27：桑基每侧留白（容纳两行标签：账号行 + 模型行）。
+   依据 ECharts option.html#series-sankey.left/right：留白是像素或百分比。
+   要点：两侧留白总和必须明显小于容器宽，否则节点标签被裁到画布外。
+   容器 <500(compact) 给 62；否则按容器 22% 算并夹在 [96,150]——
+   580px 容器 → 128px，两侧 256 < 580，中间 324px 留给彩带。 */
+function swLabelPad(){
+  const w=swChartW();
+  // R2.27 补丁：手机端 62 太窄（标签宽56 < 最长「hy4flash-free」70px），
+  // breakAll 把模型名腰斩成 hy4flash-fr/ee。实测文本宽度后提到 80（标签宽74>70），
+  // 两侧160 < 容器327，中间仍剩167px 画彩带。桌面 128 不变。
+  return w<500?80:Math.max(96,Math.min(150,Math.round(w*0.22)));
+}
+/* R1.6 最近使用模型列表：按「平台 · 模型」聚合，只列名称，数据在右侧汇总。
+   用户明确：不要弄成日志列表那样每条堆一堆字段——只要平台·模型名，
+   调用次数 / low-high 分布 / 最近调用时间统一汇总在右边。按最近调用时间倒序。 */
+function swDrawRecent(){
+  const el=document.getElementById("swRecentList"); if(!el) return;
+  const segs=SW.segs||[];
+  if(!segs.length){ patchDOM(el,'<div class="empty" style="padding:14px">还没有调用记录</div>'); return; }
+  // R2.19：按「平台 · 账号 · 模型」聚合——用户要看到「WB <账号名> hy4flash-free」，
+  // 之前按「平台·模型」合并把账号抹掉了。账号用 dispLabel 掩码，和账号页一致。
+  const agg=new Map();
+  for(const s of segs){
+    const acct=s.account||"";
+    const key=(s.platform||"?")+"\u0000"+acct+"\u0000"+(s.model||"—");
+    if(!agg.has(key)) agg.set(key,{platform:s.platform,account:acct,model:s.model,
+      requests:0,low:0,high:0,last_at:0,credit:0,errors:0});
+    const a=agg.get(key);
+    a.requests+=s.requests||0;
+    a[s.public_mode==="high"?"high":"low"]+=s.requests||0;
+    a.last_at=Math.max(a.last_at,s.last_at||s.first_at||0);
+    a.credit+=(s.credit||0);
+    a.errors+=(s.errors||0);
+  }
+  const rows=[...agg.values()].sort((a,b)=>b.last_at-a.last_at);
+  const totalLow=rows.reduce((n,a)=>n+a.low,0);
+  const totalHigh=rows.reduce((n,a)=>n+a.high,0);
+  const head=`<div class="swrecent-head">
+      <span>最近使用模型 · 按调用时间</span>
+      <span class="sw-mode-pill m-low">low ${totalLow}</span>
+      <span class="sw-mode-pill m-high">high ${totalHigh}</span>
+    </div>`;
+  const body=rows.map(a=>{
+    const qd=(a.platform||"").toLowerCase()==="qoder";
+    const plat=qd?"QD":"WB", platColor=qd?"#8944AB":"#0A62C4";
+    // R2.24：去掉行内 low/high 徽章——顶部汇总已有标签色区分；改由模型名字体颜色区分。
+    // 有扣费/失败才补一笔。
+    /* R2.25：窄屏一行显示——积分用「N分」更短（红色数字语义已够），失败同理去空格。 */
+    const extra=(a.errors?`<span style="color:var(--err)">${a.errors}失败</span>`:"")
+      +(a.credit>0?`<span style="color:var(--err)">${num(a.credit)}分</span>`:"");
+    // R2.25：今天只显「时:分」，跨天才带日期，省一大截宽度。
+    const recent=a.last_at?fmtRecent(a.last_at):"—";
+    const acctDisp=a.account?dispLabel(a.account):"";
+    return `<div class="swrecent-row">
+      <div class="swrecent-name">
+        <span style="color:${platColor};font-weight:600;font-size:11px;flex:none">${plat}</span>
+        ${acctDisp?`<span class="swrecent-acct" title="${esc(a.account)}">${esc(acctDisp)}</span>`:""}
+        <b class="${a.high?"m-high":"m-low"}">${esc(a.model||"—")}</b>
+      </div>
+      <div class="swrecent-stat">
+        <b>${a.requests} 次</b>
+        ${extra}
+        <span class="swrecent-time">${recent}</span>
+      </div>
+    </div>`;
+  }).join("");
+  patchDOM(el,head+body);
+  fitRecentRows(el);
+}
+
+/* R2.26：最近使用行「账号名智能两态」——
+   用户要求：账号名可缩略让内容尽量挤一行；实在塞不下才换行，且换行时不缩略账号名。
+   做法（逐行测量，两态切换）：
+     1) 先全部回基础态（账号名完整 + flex-wrap 允许换行），量每行 name/stat 顶部差；
+     2) 基础态已单行 → 保持（账号名完整，最理想）；
+     3) 基础态换行了 → 加 .rc-shrink（账号名省略号 + nowrap）再量；
+        - 能塞回单行 → 保留 .rc-shrink（缩略单行）；
+        - 仍塞不下 → 移除 .rc-shrink（换行，但账号名恢复完整不缩略）。
+   测量引起的 reflow 只在 patchDOM 后跑一次，不在实时刷新高频路径里反复抖。 */
+function fitRecentRows(el){
+  if(!el) return;
+  const rows=[...el.querySelectorAll(".swrecent-row")];
+  rows.forEach(r=>r.classList.remove("rc-shrink"));
+  const isOneLine=r=>{
+    const n=r.querySelector(".swrecent-name"),s=r.querySelector(".swrecent-stat");
+    if(!n||!s) return true;
+    return Math.abs(n.getBoundingClientRect().top-s.getBoundingClientRect().top)<=2;
+  };
+  // 缩略态账号名的最小可读宽度：低于它说明被压得太狠（"深…""模…"都看不清），
+  // 这种时候用户宁可换行也要看全名字——放弃单行，回基础态完整显示。
+  const MIN_ACCT=44;
+  const acctReadable=r=>{
+    const a=r.querySelector(".swrecent-acct");
+    if(!a) return true;
+    return a.getBoundingClientRect().width>=MIN_ACCT;
+  };
+  for(const r of rows){
+    if(isOneLine(r)) continue;         // 基础态就单行：账号名保持完整
+    r.classList.add("rc-shrink");       // 试缩略态能否塞回一行
+    // 塞回一行后还得保证账号名没被压到看不清；否则回基础态换行+完整名字
+    if(!isOneLine(r)||!acctReadable(r)) r.classList.remove("rc-shrink");
+  }
+}
+function swDrawFlow(){
+  const c=SW.chart; if(!c) return; const th=swTheme();
+  /* 双层桑基：左列 = 切走的账号·模型，右列 = 切进的账号·模型。
+     语义就是用户要的「从这里切到那里」：左边一个节点代表"从这儿跳走"，
+     右边一个节点代表"跳到这儿"，彩带粗细 = 跳转次数。
+
+     为什么不用单层节点 + 合并边：账号轮转天然有回边（A→B→A），
+     ECharts 桑基图要求 DAG，合并后必然抛 "Sankey is a DAG, the original
+     data has cycle!"，整图空白（第一次验收就是这个坑）。
+     拆成左右两列后，同一对账号之间的来回跳转会并成两条反向彩带
+     （左A→右B 和 左B→右A），既无环又保留了跳转方向与次数。 */
+  // R2.30：流向图也走范围过滤（与时间轴同口径），近5分钟看实时切换、窗口随时间滚动。
+  const seq=[...swRangeSegs()].reverse();   // 时间正序
+  /* R1.2：线上 260 段会展开 24 个节点 + 上百条彩带，密密麻麻看不清。
+     做法：按「节点参与切换次数」排序，只保留 Top N 节点，其余跳转丢弃
+     （不是塞进「其它」节点——那会造成假的 A→其它→B 跳转，误导用户）。
+     默认显示 top 12；提示被折叠了多少节点，需要全量可在文字明细看。 */
+  const NODE_LIMIT=12;
+  const activity={};
+  for(let i=1;i<seq.length;i++){
+    const a=swLabel(seq[i-1]), b=swLabel(seq[i]);
+    if(a===b) continue;
+    activity[a]=(activity[a]||0)+1; activity[b]=(activity[b]||0)+1;
+  }
+  const keep=new Set(Object.keys(activity).sort((x,y)=>activity[y]-activity[x]).slice(0,NODE_LIMIT));
+  const hiddenNodes=Object.keys(activity).length-keep.size;
+  const pairs={};
+  for(let i=1;i<seq.length;i++){
+    const from=swLabel(seq[i-1]), to=swLabel(seq[i]);
+    if(from===to||!keep.has(from)||!keep.has(to)) continue;
+    const k=from+"\u0000"+to;
+    if(!pairs[k]) pairs[k]={from,to,count:0,last:i};
+    pairs[k].count++;
+  }
+  const edges=Object.values(pairs);
+  SW._hiddenNodes=hiddenNodes;
+  swFoldHint(hiddenNodes, keep.size, seq.length);
+  if(!edges.length){
+    const tip=SW.range>0?"该时间范围内没有切换段，试试「全部」":"没有符合条件的切换段";
+    c.setOption({backgroundColor:"transparent",
+      title:{text:tip,left:"center",top:"middle",
+        textStyle:{color:th.sub,fontSize:13,fontWeight:"normal"}}},true);
+    return;
+  }
+  const leftNames=[], rightNames=[];
+  for(const e of edges){
+    if(!leftNames.includes(e.from)) leftNames.push(e.from);
+    if(!rightNames.includes(e.to)) rightNames.push(e.to);
+  }
+  /* 同一个「账号 · 模型」可能既是切走的起点、又是切进的终点（A→B→A）。
+     ECharts 桑基按名字索引节点，同名出现两次会撞出
+     "Cannot set properties of undefined (setting 'dataIndex')"。
+     所以左右两侧各加一个角色后缀区分，标签里再把后缀去掉。 */
+  const L=n=>"« "+n, R=n=>n+" »";
+  const strip=n=>String(n).replace(/^« | »$/g,"");
+  /* R1.3：节点名形如「WB <掩码手机号> · hy4flash-free」，一行放不下会被截成
+     「hy4f...」。标签改成两行：账号一行、模型一行，各自都短，完整可读。 */
+  const twoLine=n=>strip(n).replace(" · ","\n");
+  /* R2.27：标签两行显示（账号/模型各一行）。关键教训——series 级 label 的
+     width/align 会压制节点级 position，且 left/right 各 170 + width165 = 670
+     远超容器宽（实测约580px），右侧标签必然被裁。改为：
+     - 留白 swLabelPad() 按容器宽算，保证两侧留白总和 < 容器宽；
+     - align/width 下沉到节点级，左列 align:right、右列 align:left（都向外延伸）。
+     数值依据 ECharts 官方 option.html#series-sankey.label（position/overflow/align）
+     与 #series-sankey.left/right。 */
+  const pad=swLabelPad();
+  // R2.27 补丁：overflow 用 truncate 而非 breakAll——超长时显示省略号，
+  // 不把 hy4flash-free/deepseek-v4.1-flash 这种模型名从中间腰斩成两截。
+  const labelBase={color:th.text,fontSize:swCompact()?10:11,lineHeight:swCompact()?13:14,
+    overflow:"truncate",ellipsis:"…",width:pad-6};
+  const nodes=[
+    ...leftNames.map(n=>({name:L(n),itemStyle:{color:swColorOf(n)},
+      label:{...labelBase,position:"left",align:"right",formatter:()=>twoLine(n)}})),
+    ...rightNames.map(n=>({name:R(n),itemStyle:{color:swColorOf(n)},
+      label:{...labelBase,position:"right",align:"left",formatter:()=>twoLine(n)}})),
+  ];
+  // 彩带宽度按 log 压缩：某对账号可能跳几百次，线性宽度会把别的跳转挤没。
+  // 归一到 1..12 之间，保证最少 1、最多 12。
+  const maxC=Math.max(...edges.map(e=>e.count));
+  const links=edges.map(e=>({
+    source:L(e.from), target:R(e.to),
+    value:1+Math.round(11*Math.log1p(e.count)/Math.log1p(maxC||1)),
+    count:e.count, from:e.from, to:e.to,
+  }));
+  c.setOption({
+    backgroundColor:"transparent",
+    tooltip:{trigger:"item",confine:true,
+      formatter:p=>p.dataType==="edge"
+        ? esc(p.data.from).replace(" · ","<br>")+" → "+esc(p.data.to).replace(" · ","<br>")+"<br>切换 "+p.data.count+" 次"
+        : esc(strip(p.name)).replace(" · ","<br>")},
+    series:[{
+      type:"sankey",layout:"none",emphasis:{focus:"adjacency"},
+      // R2.5：侧边留白按容器宽算。窄屏 left/right 收到 60、label.width 收到 62
+      // （两行显示，模型名截断但能看到账号掩码）；宽屏维持 170/165 不截字。
+      nodeWidth:8,nodeGap:8,draggable:false,top:14,bottom:14,
+      left:pad,right:pad,
+      data:nodes,links,
+      // R2.27：label 配置已下沉到每个节点（左列 align:right / 右列 align:left），
+      // 这里不再设全局 width/align——它们会压制节点级 position 导致右侧标签被裁。
+      lineStyle:{color:"gradient",opacity:.55}
+    }]
+  },true);
+}
+/* R1.3：折叠提示写进 DOM（不是 ECharts title——canvas 内的文字用户看不清、
+   自动化也读不到）。节点超过 12 个时明确说「折叠了几个、看下方明细」。 */
+function swFoldHint(hidden, shown, total){
+  const el=document.getElementById("swFoldHint");
+  if(!el) return;
+  if(hidden>0){
+    el.style.display="block";
+    el.textContent="图中只画出切换最频繁的 "+shown+" 个节点（另有 "+hidden+
+      " 个较少节点已折叠）；本视图共 "+total+" 段，完整明细见下方「展开文字明细」";
+  }else{
+    el.style.display="none";
+    el.textContent="";
+  }
+}
+/* 按「账号 · 模型」名反查平台色：名字里含模型名，用段数据反查最准 */
+function swColorOf(name){
+  for(const s of SW.segs){
+    if(swLabel(s)===name) return swColor(s);
+  }
+  return "#8E8E93";
+}
+function swDrawTime(){
+  const c=SW.chart; if(!c) return; const th=swTheme();
+  // 段是倒序（最新在前）。播放按 SW.idx 在**倒序**上推进（最新的先演），
+  // 所以这里必须直接用 SW.segs，不能 reverse()——之前 reverse 后 idx 与
+  // seq 对不上，出现「计数在走第 3 段、文案却还是第 1 段」的不一致。
+  // R2.30：范围过滤走公共函数（流向图/时间轴同口径），Date.now() 实时滚动窗口。
+  let seq=swRangeSegs();
+  if(!seq.length){
+    c.setOption({backgroundColor:"transparent",
+      title:{text:"该时间范围内没有切换段",left:"center",top:"middle",
+        textStyle:{color:th.sub,fontSize:13,fontWeight:"normal"}}},true);
+    const st2=document.getElementById("swStep"); if(st2) st2.textContent="";
+    const de2=document.getElementById("swDesc"); if(de2) de2.textContent="";
+    swFoldHint(0,0,0);
+    return;
+  }
+  const t0=Math.min(...seq.map(s=>s.first_at||0));
+  const tEnd=Math.max(...seq.map(s=>s.last_at||s.first_at||0));
+  /* R1.2：时间轴同样限流——线上 24 行挤在一起。按段数取 Top 12 活跃行，
+     带 WB/QD 角标前缀，与流向图口径一致。 */
+  const rowCount={};
+  for(const s of seq){ const n=swLabel(s); rowCount[n]=(rowCount[n]||0)+1; }
+  // R2.5：手机端只画 6 行（桌面 12），否则 12 行挤在 356px 里每条不到 30px 看不清。
+  const compact=swCompact();
+  const rows=[...new Set(seq.map(swLabel))]
+    .sort((a,b)=>(rowCount[b]-rowCount[a])).slice(0,compact?6:12).reverse();
+  const hiddenRows=[...new Set(seq.map(swLabel))].length-rows.length;
+  const duration=Math.max(60,tEnd-t0);
+  /* R2.28 补丁：X轴 max 向上取整到整分钟，刻度固定 5 等分落在整分钟上——
+     原来 max=269.86s 时 ECharts 自动刻度经 Math.round(v/60) 会出现「3m 3m」重复。 */
+  const axisMax=Math.ceil(duration/60)*60;
+  const axisStep=Math.max(60,Math.ceil(axisMax/5/60)*60);  // 刻度间隔也为整分钟，杜绝重复标签
+  const idx=Math.min(SW.idx,seq.length-1), cur=seq[idx];
+  swFoldHint(hiddenRows, rows.length, seq.length);
+  c.setOption({
+    backgroundColor:"transparent",
+    /* R2.29：左侧空白根因——grid.left=142 但两行标签实际只需 ~70px，右对齐后
+       左边空出一大截。实测文本宽（长昵称≈65px、hy4flash-free=70px），
+       axisLabel.width 收到 76/84 刚好容纳，grid.left=width+间距 → 绘图区左移变宽。 */
+    grid:{left:compact?86:96,right:compact?12:16,top:18,bottom:28},
+    xAxis:{type:"value",min:0,max:axisMax,interval:axisStep,
+      axisLabel:{color:th.sub,formatter:v=>Math.round(v/60)+"m"},
+      splitLine:{lineStyle:{color:th.grid}},axisLine:{lineStyle:{color:th.grid}}},
+    /* R2.27：Y轴标签原来是「WB <长昵称> · hy4flash-free」单行被 truncate 成
+       「WB 可叹飘 · hy4f...」。改为 formatter 分两行（账号/模型各一行），
+       每行都短、完整可读。依据 ECharts option.html#xAxis.axisLabel（formatter/width/overflow）。
+       R2.29：width 从 100/132 收紧到 76/84（实测两行各 ≤70px），overflow 由 breakAll
+       改 truncate+「…」——breakAll 会把英文模型名腰斩（hy4flash-fr/ee）。 */
+    yAxis:{type:"category",data:rows,axisLabel:{color:th.text,fontSize:compact?10:11,
+      width:compact?76:84,overflow:"truncate",ellipsis:"…",lineHeight:compact?13:15,
+      formatter:v=>String(v).replace(" · ","\n")},
+      splitLine:{show:true,lineStyle:{color:th.grid}}},
+    tooltip:{trigger:"item",confine:true,formatter:p=>{
+      const s=seq[p.dataIndex];
+      return esc(swLabel(s))+"<br>"+fmtShort(s.first_at)+" · "+s.requests+" 次";
+    }},
+    series:[{
+      type:"custom",
+      renderItem:(p,api)=>{
+        const s=seq[p.dataIndex];
+        const x0=api.coord([Math.max(0,s.first_at-t0),0])[0];
+        const x1=api.coord([Math.max(1,s.last_at-t0),0])[0];
+        const y=api.coord([0,rows.indexOf(swLabel(s))])[1];
+        const h=Math.max(8,api.size([0,1])[1]*0.5);
+        const isCur=p.dataIndex===idx;
+        return {type:"rect",shape:{x:x0,y:y-h/2,width:Math.max(5,x1-x0),height:h,r:4},
+          style:{fill:swColor(s),opacity:isCur?1:.8,stroke:isCur?th.text:"transparent",lineWidth:isCur?2:0}};
+      },
+      data:seq.map((_,i)=>i)
+    }]
+  },true);
+  document.getElementById("swStep").textContent="第 "+(idx+1)+" / "+seq.length+" 段";
+  const reason=String(cur?.reason||"起点").replace(/\d+\.\d{6,}/g,m=>num(Number(m)));
+  document.getElementById("swDesc").textContent=cur?swLabel(cur)+" — "+reason:"";
+}
+
+/* R2.7：请求行抽成函数，实时刷新时只换这块，不动上面的切换图（保留 SW 交互态）。 */
+function reqRowsHTML(items){
+  let h="";
+  for(const x of items){
+    const st=x.status==="success"?"ok":(x.status==="error"?"err":"warn");
+    const charge=x.actual_credit==null?"扣费未知":("扣费 "+num(x.actual_credit)+" 积分");
+    h+=`<div class="row"><div class="rmain">
+      <div class="rtitle"><span class="dotst ${st}"></span>${esc(x.model_name||"—")}${
+        x.account_label?`${platBadge(x.platform)}<span class="pill plain">${esc(dispLabel(x.account_label))}</span>`:""}</div>
+      <div class="rsub">${fmtShort(x.created_at)} · Token 估 ${esc(x.token_estimate)} · ${esc(charge)}</div>
+      ${x.error?`<div class="rsub wrap" style="color:var(--err)">${esc(errText(x.error).slice(0,140))}</div>`:""}
+      </div><div class="rright"><span class="mono">${
+        /* 0 不是「很快」，是「没走到上游」：路由阶段就失败（没可用模型/无可用账号）
+           的记录 latency_ms 落库就是 0，显示成 0 ms 会让人以为请求打过去又秒回了。 */
+        (x.latency_ms==null||x.latency_ms===0)?"—":msText(x.latency_ms)}</span></div></div>`;
+  }
+  return h;
+}
+function renderRequests(items,sw){
+  const body=document.getElementById("body");
+  const hist=switchHistoryHTML(sw);
+  if(!items||!items.length){ body.innerHTML=hist+'<div class="empty">还没有请求</div>'; swInitChart(); return; }
+  body.innerHTML=hist+`<div class="group"><div class="ghead">Token 调用记录 · 最近 ${items.length} 条</div><div class="card scroll-list" id="reqList">${reqRowsHTML(items)}</div></div>`;
+  swInitChart();
+}
+
+/* ==================== 调度（P37） ==================== */
+let SCH={data:null,
+  // R2.5：low/high 列表折叠态（默认收起，只显示前 3 个）；重绘时保留。
+  expand:{low:false,high:false}};
+/* P41：预览用的请求长度。免费只在一段长度内，长度变了排序也变。 */
+let SCH_TOKENS=200;
+
+function schTgl(label,on,cls){ return `<button class="tgl ${cls||""}" data-sch="${label}" aria-pressed="${on?"true":"false"}">${on?"开启":"关闭"}</button>`; }
+
+/* P41：上游按「请求输入 token」计费，免费只是一段长度区间。
+   所以这里显示的是「跑这个长度的请求要花多少」，不是「这个模型免费吗」。 */
+function schMeta(m){
+  const bits=[];
+  if(m.est_cost!=null) bits.push(m.est_cost===0?"本次免费":"本次 "+num(m.est_cost)+" 积分");
+  else bits.push("未标价");
+  if(m.free_upto>0) bits.push("≤"+m.free_upto+" token 免费");
+  if(m.flat_credit!=null) bits.push("按次 "+num(m.flat_credit));
+  if(m.points) bits.push(m.points+" 个实测点");
+  return bits.join(" · ");
+}
+/* R2.6：真免费角标。用后端 always_free（官方标 free / 倍率 0）判定，不硬编码 model id。
+   hy4flash-free 与 hy4flash 的 display_name 都叫「Hy4 flash」，靠这个角标区分。 */
+function freePill(m){ return m.always_free ? '<span class="pill free">FREE</span>' : ""; }
+
+function renderSchedule(d){
+  SCH.data=d;
+  const body=document.getElementById("body");
+  const models=d.models||[];
+  const disabled=new Set(d.disabled_models||[]);
+  const hidden=new Set((d.hidden_models||[]).map(x=>String(x).toLowerCase()));
+  // R1 Q3：笼统别名（auto/default/快速…）不进候选池，页面也不展示。
+  // 用户要的是「只留真正的模型名」，所以这里连模型列表都过滤掉。
+  const visModels=models.filter(m=>!hidden.has(String(m.model||"").toLowerCase())&&!hidden.has(String(m.model_name||"").toLowerCase()));
+  const cooldowns=d.cooldowns||[];
+  const log=d.log||[];
+  const accounts=d.accounts||[];
+  const profiles=d.profiles||{};
+  const highOrder=new Set((profiles.high?.model_order)||[]);
+  // R2.5：按近 7 天实际调用次数排序，让 low/high 列表顺序 = 真实调用情况。
+  const calls=d.model_calls||{};
+  const callsOf=(m,mode)=>((calls[m]||{})[mode]||0);
+  // R2.6：默认按调用次数；一旦用户拖拽过（ui_low_order 非空），就以用户手动
+  // 顺序为准并锁定，不再被调用数覆盖。点「恢复自动排序」清掉它回到默认。
+  // 关键：ui_low_order 是纯 UI 展示顺序，和调度策略 strategy/model_order 解耦——
+  // 拖拽 low 列表绝不能改变「免费优先自动调度」，否则付费模型被拖前面就开始扣费。
+  const lowManual=(d.ui_low_order||[]).length>0;
+  const lowRank=new Map([...(d.ui_low_order||[])].map((m,i)=>[m,i]));
+  const lowModels=[...visModels].sort((a,b)=>{
+    if(lowManual){
+      const ia=lowRank.has(a.model), ib=lowRank.has(b.model);
+      if(ia!==ib) return ia?-1:1;                       // 拖过的排前
+      if(ia&&ib) return lowRank.get(a.model)-lowRank.get(b.model);
+    }
+    const ca=callsOf(a.model,"low"), cb=callsOf(b.model,"low");
+    if(ca!==cb) return cb-ca;
+    return (b.free_upto||0)-(a.free_upto||0);
+  });
+  // high：启用的排前（按 high model_order 内的先后），再按调用次数。
+  const highRank=new Map([...((profiles.high?.model_order)||[])].map((m,i)=>[m,i]));
+  const highModels=[...visModels].sort((a,b)=>{
+    const ia=highRank.has(a.model), ib=highRank.has(b.model);
+    if(ia!==ib) return ia?-1:1;                       // 启用的在前
+    if(ia&&ib) return highRank.get(a.model)-highRank.get(b.model);  // 启用项按配置序
+    return callsOf(b.model,"high")-callsOf(a.model,"high");          // 未启用按调用数
+  });
+
+  let h="";
+
+  /* --- P15 遗留手动锁：必须显眼地提示并可一键清除 --- */
+  if(d.legacy_lock){
+    h+=`<div class="group"><div class="ghead">遗留手动锁</div><div class="card">
+      <div class="row"><div class="rmain">
+        <div class="rtitle">锁在 ${esc(d.legacy_lock)}</div>
+        <div class="rsub">旧版手动锁会让自动调度失效。</div>
+      </div><div class="rright"><button class="btn" id="clearlockbtn">清除</button></div></div>
+    </div></div>`;
+  }
+
+  /* --- P49：后台任务状态。自动签到 / 凭据续期全靠后台线程，
+         它要是没起来，页面却什么都不显示，用户只会以为「今天没邮件」。 --- */
+  const bg=d.background||{};
+  if(bg.enabled!==undefined){
+    const sLog=(log||[]).find(l=>l.event==="signin");
+    const bLog=(log||[]).find(l=>l.event==="background");
+    /* 调度日志的 detail 形如「每日签到：9 个账号，7 成功 / 0 失败，邮件已发送」，
+       拆成「时间 + 邮件状态徽章 + 摘要」三段，窄屏才不会挤成一行。 */
+    const sDetail=sLog?(sLog.detail||""):"";
+    const sTime=sLog?fmtShort(sLog.created_at):"";
+    const sMail=/邮件已发送/.test(sDetail)?"邮件已发送"
+                :(/邮件未发送/.test(sDetail)?"邮件未发送":"");
+    const sBody=sDetail.replace(/^每日签到：/,"").replace(/，邮件(已|未)发送$/,"");
+    const renewH=Math.round((bg.renew_interval||21600)/3600);
+    h+=`<div class="group"><div class="ghead">后台任务</div><div class="card">
+      <div class="srow"><div class="sk">维护线程<small>账号同步、探针刷新、自动签到、凭据续期都靠它</small></div>
+        <div class="sv">${bg.running?pill("运行中","ok"):pill("未运行","err")}</div></div>
+      <div class="srow"><div class="sk">每日签到<small>到点后在窗口内跑一次；服务重启不会漏签</small></div>
+        <div class="sv">每天 ${esc(bg.signin_at||"—")} 自动执行</div></div>
+      <div class="srow"><div class="sk">凭据续期<small>授权快到期时用 refresh token 自动续</small></div>
+        <div class="sv">每 ${renewH} 小时检查一次</div></div>
+      <div class="srow"><div class="sk">上次签到<small>${sBody?esc(sBody):"签到结果和邮件发送情况"}</small></div>
+        <div class="sv">${sTime?`${esc(sTime)}${sMail?pill(sMail,sMail==="邮件已发送"?"ok":"warn"):""}`:"还没有记录"}</div></div>
+      ${bg.last_error?`<div class="srow"><div class="sk">后台错误<small>线程启动或运行时的异常</small></div>
+        <div class="sv" style="color:var(--err)">${esc(bg.last_error)}</div></div>`:""}
+      ${bLog?`<div class="srow"><div class="sk">最近一次后台报错</div>
+        <div class="sv" style="color:var(--err)">${esc(fmtShort(bLog.created_at))} · ${esc(bLog.detail||"")}</div></div>`:""}
+    </div></div>`;
+  }
+
+  /* --- 策略 --- */
+  h+=`<div class="group"><div class="ghead">策略</div><div class="card">
+    <div class="srow"><div class="sk">调用顺序<small>自动＝按本次预计扣费从低到高；按顺序＝严格用下面的拖拽顺序</small></div>
+      <div class="sv selgrp" id="strategy">
+        <button data-strategy="auto" aria-pressed="${d.strategy!=="ordered"?"true":"false"}">自动</button>
+        <button data-strategy="ordered" aria-pressed="${d.strategy==="ordered"?"true":"false"}">按顺序</button>
+      </div></div>
+    <div class="srow"><div class="sk">手动指定<small>选中的模型排最前；它限流了仍自动换下一个</small></div>
+      <div class="sv"><select id="manualsel" class="inp">
+        <option value="">不指定（自动）</option>
+        ${visModels.map(m=>`<option value="${esc(m.model)}"${d.manual_model===m.model?" selected":""}>${esc(m.display_name||m.model)}</option>`).join("")}
+      </select></div></div>
+    <div class="srow"><div class="sk">预览请求长度<small>免费只在一段长度内；换个长度，排序会变</small></div>
+      <div class="sv"><select id="lenSel" class="inp">
+        ${[100,200,500,1000,2000,5000,10000].map(n=>`<option value="${n}"${Number(d.est_tokens||200)===n?" selected":""}>${n} token</option>`).join("")}
+      </select></div></div>
+    <div class="srow"><div class="sk">免费用完切付费<small>low 模式：本次没有不扣钱的模型时，用最便宜的付费模型兜底（首次扣费会发邮件）</small></div>
+      <div class="sv">${schTgl("allow_paid",d.allow_paid,"warn")}</div></div>
+    <div class="srow"><div class="sk">high 积分预警<small>账号余额低于「近 ${esc(String((d.low_balance_alert||{}).window_days||7))} 日峰值 × ${esc(String(Math.round(((d.low_balance_alert||{}).ratio||0.1)*100)))}%」时发邮件</small></div>
+      <div class="sv">${schTgl("low_balance_alert",(d.low_balance_alert||{}).enabled!==false)}</div></div>
+    <div class="srow"><div class="sk">模型自述<small>把当前模型与计费写进提示词；只在被问到时才展开全量</small></div>
+      <div class="sv">${schTgl("fact_preamble",d.fact_preamble)}</div></div>
+    <div class="srow"><div class="sk">轮转公平窗口<small>按「最近 N 分钟用了几次」摊平账号，避免只有几个号被轮询到；0=旧累计口径</small></div>
+      <div class="sv"><input id="rotWindow" class="inp" type="number" min="0" max="1440" step="5"
+        style="width:88px" value="${Number(d.rotation_window_minutes??30)}" aria-label="轮转窗口（分钟）"> <span style="color:var(--label-2);font-size:12px">分钟</span></div></div>
+    <div class="srow"><div class="sk">价格标定探针<small>新模型出现时用少量积分测一次；后续价格变化在真实使用中自动更新</small></div>
+      <div class="sv"><select id="probeMode" class="inp" aria-label="价格标定模式">
+        <option value="coldstart"${d.probe.mode==="coldstart"?" selected":""}>仅新模型冷启动（推荐）</option>
+        <option value="all"${d.probe.mode==="all"?" selected":""}>全部模型定期重测（旧行为）</option>
+      </select> ${schTgl("probe_enabled",d.probe.enabled,"warn")}</div></div>
+    <div class="srow"><div class="sk">免费链路探测<small>用 hy4flash-free 探一次上游是否通，不花积分</small></div>
+      <div class="sv"><button id="healthProbeBtn" class="btn" type="button">立即探测</button></div></div>
+  </div></div>`;
+
+  /* --- 模型顺序（可拖拽 + 可停用）---
+     R2.6：low 区拖拽只改列表显示顺序（ui_low_order，纯 UI，不动免费优先调度）；
+     high 区是强模型清单（profiles.high.model_order），标出每个模型在 high 里的优先级。 */
+  h+=`<div class="group"><div class="ghead">模型顺序 · low 模式 · 拖动调整 · 可停用</div>
+    <div class="card"><div class="orderlist${SCH.expand.low?" scroll-list":""}" id="orderlist">`;
+  if(!lowModels.length){
+    h+=`<div class="empty">没有可用的模型目录</div>`;
+  }else{
+    lowModels.forEach((m,i)=>{
+      const nc=callsOf(m.model,"low");
+      h+=`<div class="orderrow${disabled.has(m.model)?" off":""}${d.manual_model===m.model?" manual":""}${!SCH.expand.low&&i>=3?" folded":""}" data-model="${esc(m.model)}">
+        <span class="handle" title="拖动排序">⣿</span>
+        <span class="omodel">${freePill(m)}${esc(m.display_name||m.model)}${d.manual_model===m.model?'<span class="pill info">指定</span>':""}${nc?`<span class="pill plain">${nc} 次</span>`:""}</span>
+        <span class="ometa">${esc(schMeta(m))}</span>
+        <span class="oact">
+          <button class="mv" data-mv="up" title="上移">↑</button>
+          <button class="mv" data-mv="down" title="下移">↓</button>
+          <button data-ban="1" aria-pressed="${disabled.has(m.model)?"true":"false"}">${disabled.has(m.model)?"已停用":"停用"}</button>
+        </span></div>`;
+    });
+  }
+  h+=`</div>${lowModels.length>3?`<button type="button" class="orderexpand" data-expand="low">${
+    SCH.expand.low?"收起 ▲":"展开全部 "+lowModels.length+" 个 ▼"}</button>`:""}${
+    lowManual?`<button type="button" class="orderexpand" id="resetLowOrder">恢复自动排序</button>`:""}</div></div>`;
+
+  /* --- high 强模型清单（R1 Q3）：勾选 + 排序，账号耗尽自动切下一账号/下一模型 ---
+     R2.37：加平台启用开关 + 平台徽标。只对 high 生效，严格独占（不可用就报错）。 */
+  const allPlats=["workbuddy","qoder"];
+  const rawHp=(d.high_enabled_platforms||[]).map(x=>String(x).toLowerCase());
+  const hpSet=new Set(rawHp.length?rawHp:allPlats);   // 空数组 = 不过滤 = 两个都勾
+  h+=`<div class="group"><div class="ghead">high 强模型清单 · 勾选启用 · 按优先级排序</div>
+    <div class="card">
+    <div class="srow"><div class="sk">启用平台<small>只勾 Qoder 时 high 严格只用 Qoder；限流/余额0/带工具调用会直接报错，不回落其他平台</small></div>
+      <div class="sv selgrp" id="highPlats">${
+        allPlats.map(p=>`<button type="button" data-hplat="${p}" aria-pressed="${hpSet.has(p)?"true":"false"}">${esc(PLAT_FULL[p]||p)}</button>`).join("")
+      }</div></div>
+    <div class="orderlist${SCH.expand.high?" scroll-list":""}" id="highlist">`;
+  if(!highModels.length){
+    h+=`<div class="empty">没有可用的模型目录</div>`;
+  }else{
+    highModels.forEach((m,i)=>{
+      const inHigh=highOrder.has(m.model);
+      const rank=inHigh?highRank.get(m.model)+1:0;
+      const nc=callsOf(m.model,"high");
+      const plat=(m.platform||"workbuddy").toLowerCase();
+      // Qoder 走本地 CLI，暂不接客户端 tools（协议不通，另立需求打通）。如实标出，
+      // 避免用户误以为带工具请求的失败是网关 bug。严格独占下这类请求会报错。
+      const qoderHint=plat==="qoder"?`<span class="pill plain hminor" title="${esc("Qoder 走本地 CLI，暂不接客户端工具调用；带 tools 的 high 请求在严格独占下会报错。工具打通另立需求。")}">纯聊天</span>`:"";
+      h+=`<div class="orderrow${inHigh?"":" off"}${!SCH.expand.high&&i>=3?" folded":""}" data-hmodel="${esc(m.model)}">
+        <span class="handle" style="cursor:${inHigh?"grab":"default"};opacity:${inHigh?1:.3}">⣿</span>
+        <span class="omodel">${platBadge(plat)}${freePill(m)}${esc(m.display_name||m.model)}${inHigh?`<span class="pill info">high #${rank}</span>`:""}${nc?`<span class="pill plain hminor">${nc} 次</span>`:""}${qoderHint}</span>
+        <span class="ometa">${esc(schMeta(m))}</span>
+        <span class="oact"><button data-high="1" aria-pressed="${inHigh?"true":"false"}">${inHigh?"已启用":"启用"}</button></span></div>`;
+    });
+  }
+  h+=`</div>${highModels.length>3?`<button type="button" class="orderexpand" data-expand="high">${
+    SCH.expand.high?"收起 ▲":"展开全部 "+highModels.length+" 个 ▼"}</button>`:""}
+    <div class="rsub" style="padding:10px 12px">按此顺序选模型；余额耗尽自动换号。客户端填 <code>high</code> 即走此清单。<br>平台开关只作用于 high；严格模式下不回落其他平台。</div>
+  </div></div>`;
+
+  /* --- 账号池 --- */
+  h+=`<div class="group"><div class="ghead">账号池</div><div class="card scroll-list">`;
+  if(!accounts.length){
+    h+=`<div class="empty">还没有账号</div>`;
+  }else{
+    for(const a of accounts){
+      const cd=cooldowns.find(c=>c.account_label===a.label);
+      // totalUsagePercentage 是小数（0.3 = 30%），显示时乘 100
+      const usedPct=a.quota!=null?Math.round(a.quota*100):null;
+      h+=`<div class="row"><div class="rmain">
+        <div class="rtitle">${esc(dispLabel(a.label))}${a.platform==="qoder"?'<span class="pill plain">仅签到</span>':""}</div>
+        <div class="rsub">${a.balance!=null?("余额 "+a.balance+" 积分"):"余额未知"}${
+          usedPct!=null?(" · 已用 "+usedPct+"%"):""}${
+          a.last_sync_at?(" · 同步于 "+fmtShort(a.last_sync_at)):""
+        }${cd?(" · 冷却到 "+fmtShort(cd.until_at)):""}${a.note?(" · "+esc(a.note)):""}</div>
+      </div><div class="rright">${a.enabled===0?pill("停用","warn"):pill("参与","ok")}</div></div>`;
+    }
+  }
+  h+=`</div>
+    <div class="card" style="margin-top:10px;display:flex;gap:8px;padding:12px">
+      <button class="btn" id="probebtn" style="flex:1;background:var(--surface-2,#eee);color:var(--label-1)">跑一轮探针</button>
+      <button class="btn" id="calibbtn" style="flex:1;background:var(--surface-2,#eee);color:var(--label-1)">标定价格曲线</button>
+    </div>
+    <div class="rsub" style="margin:8px 2px 0">对前 8 个模型实测 5 种长度的扣费，约耗 1~2 积分。</div>
+    </div></div>`;
+
+  /* --- 调度日志 --- */
+  h+=`<div class="group"><div class="ghead">调度日志</div><div class="card scroll-list">`;
+  if(!log.length){
+    h+=`<div class="empty">还没有换号记录</div>`;
+  }else{
+    for(const l of log){
+      h+=`<div class="row"><div class="rmain"><div class="rtitle" style="font-size:12px">${esc(l.event)}</div>
+        <div class="rsub wrap">${esc(l.detail||"")}</div></div>
+        <div class="rright"><span class="mono">${fmtShort(l.created_at)}</span></div></div>`;
+    }
+  }
+  h+=`</div></div>`;
+
+  body.innerHTML=h;
+  bindSchedule();
+}
+
+async function saveSchedule(payload){
+  try{
+    await postJSON("schedule",payload);
+    await load("routes");
+  }catch(err){ toast("保存失败："+err.message); }
+}
+/* R2.5：只保存、不重绘页面（供 high 启用按钮 ajax 局部刷新用）。返回是否成功。 */
+async function saveScheduleQuiet(payload){
+  try{ await postJSON("schedule",payload); return true; }
+  catch(err){ toast("保存失败："+err.message); return false; }
+}
+/* R2.7：low 拖拽/上移下移后，quiet 保存不重绘，手动同步本地状态 +
+   「恢复自动排序」按钮（拖过才显示），避免整页跳动/刷新。 */
+function syncLowManualUi(order){
+  SCH.data=SCH.data||{};
+  SCH.data.ui_low_order=order;
+  const card=document.getElementById("orderlist")?.parentElement;
+  if(!card) return;
+  let btn=document.getElementById("resetLowOrder");
+  if(order.length && !btn){
+    btn=document.createElement("button");
+    btn.type="button"; btn.className="orderexpand"; btn.id="resetLowOrder";
+    btn.textContent="恢复自动排序";
+    btn.addEventListener("click",()=>resetLowOrderQuiet());
+    card.appendChild(btn);
+  }else if(!order.length && btn){
+    btn.remove();
+  }
+}
+/* R2.8：恢复自动排序——quiet 保存（不重绘）+ 按调用数重排 DOM + 移除按钮。
+   和拖拽/上移下移一样走局部更新，杜绝整页跳动。 */
+async function resetLowOrderQuiet(){
+  const ok=await saveScheduleQuiet({ui_low_order:[]});
+  if(!ok) return;
+  syncLowManualUi([]);
+  const list=document.getElementById("orderlist");
+  if(!list) return;
+  const calls=(SCH.data&&SCH.data.model_calls)||{};
+  const callsOf=(m)=>((calls[m]||{})["low"]||0);
+  // 按 low 调用数降序重排现有行；free_upto 作并列 tie-break
+  const rows=[...list.querySelectorAll(".orderrow")];
+  const freeUpto=(m)=>{
+    const model=(SCH.data&&SCH.data.models||[]).find(x=>x.model===m);
+    return model?(model.free_upto||0):0;
+  };
+  rows.sort((a,b)=>{
+    const ca=callsOf(a.dataset.model), cb=callsOf(b.dataset.model);
+    if(ca!==cb) return cb-ca;
+    return freeUpto(b.dataset.model)-freeUpto(a.dataset.model);
+  });
+  rows.forEach(r=>list.appendChild(r));
+}
+
+/* P41：轮询标定进度。一次标定 = N 模型 × 5 档长度 = 5N 次真实请求，
+   实测每次约 7 秒，所以要几分钟。页面要持续给出「跑到第几个了」。 */
+async function pollCalibrate(btn){
+  for(;;){
+    await new Promise(r=>setTimeout(r,1500));
+    let s;
+    try{ s=await getJSON("pricing/calibrate"); }catch{ continue; }
+    if(!s.running){
+      btn.disabled=false; btn.textContent="标定价格曲线";
+      if(s.error) toast("标定失败："+s.error);
+      else toast("标定完成："+(s.done||0)+" 个模型");
+      await load("routes");
+      return;
+    }
+    btn.textContent="标定中 "+(s.done||0)+"/"+(s.total||"?")+(s.current?" · "+s.current:"");
+  }
+}
+
+function bindSchedule(){
+  const d=SCH.data||{};
+  document.querySelectorAll("[data-strategy]").forEach(b=>b.addEventListener("click",async()=>{
+    await saveSchedule({strategy:b.dataset.strategy});
+  }));
+  document.querySelectorAll("[data-sch]").forEach(b=>b.addEventListener("click",async()=>{
+    const key=b.dataset.sch;
+    if(key==="low_balance_alert"){
+      const cur=(SCH.data&&SCH.data.low_balance_alert)||{};
+      await saveSchedule({low_balance_alert:{...cur,enabled:!cur.enabled}});
+      return;
+    }
+    const cur=!!(SCH.data&&SCH.data[key]);
+    await saveSchedule({[key]:!cur});
+  }));
+
+  /* R2.35/36：轮转窗口 + 探针模式 + 免费健康探测 */
+  const rotW=document.getElementById("rotWindow");
+  if(rotW) rotW.addEventListener("change",async()=>{
+    await saveSchedule({rotation_window_minutes:Math.max(0,Math.min(1440,Number(rotW.value)||0))});
+  });
+  const pm=document.getElementById("probeMode");
+  if(pm) pm.addEventListener("change",async()=>{ await saveSchedule({probe_mode:pm.value}); });
+  const hb=document.getElementById("healthProbeBtn");
+  if(hb) hb.addEventListener("click",async()=>{
+    hb.disabled=true;
+    const old=hb.textContent; hb.textContent="探测中…";
+    try{
+      const r=await postJSON("/admin/api/probe/health",{});
+      toast(r&&r.ok?`链路正常（${r.model}，扣费 ${r.credit??"未知"}）`:`探测失败：${r&&r.error||"未知"}`);
+    }catch(e){ toast("探测请求失败："+(e.message||e),"err"); }
+    finally{ hb.disabled=false; hb.textContent=old; }
+  });
+
+  /* R2.5：low/high 列表展开/收起（不重新拉接口，只切 DOM class） */
+  document.querySelectorAll("[data-expand]").forEach(b=>b.addEventListener("click",()=>{
+    const which=b.dataset.expand;
+    SCH.expand[which]=!SCH.expand[which];
+    const list=document.getElementById(which==="low"?"orderlist":"highlist");
+    if(list){
+      list.classList.toggle("scroll-list",SCH.expand[which]);
+      list.querySelectorAll(".orderrow").forEach((row,i)=>row.classList.toggle("folded",!SCH.expand[which]&&i>=3));
+    }
+    const n=list?list.querySelectorAll(".orderrow").length:0;
+    b.textContent=SCH.expand[which]?"收起 ▲":("展开全部 "+n+" 个 ▼");
+  }));
+
+  /* R2.6：恢复自动排序。low 清 ui_low_order（纯 UI，不碰调度）。
+     high 不加此按钮——那份清单是用户配置的强模型本身，不是可恢复的默认值。 */
+  const resetLow=document.getElementById("resetLowOrder");
+  if(resetLow) resetLow.addEventListener("click",()=>resetLowOrderQuiet());
+
+  /* R2.37：high 启用平台开关（写 profiles.high.enabled_platforms）。
+     空数组=不过滤=两个平台都勾；只勾一个时严格独占（不可用报错、不回落）。 */
+  const HP_PLATS=["workbuddy","qoder"];
+  document.querySelectorAll("#highPlats [data-hplat]").forEach(btn=>{
+    btn.addEventListener("click",async e=>{
+      e.stopPropagation();
+      const p=btn.dataset.hplat;
+      const cur=new Set((SCH.data?.high_enabled_platforms||[]).map(x=>String(x).toLowerCase()));
+      if(!cur.size){ HP_PLATS.forEach(x=>cur.add(x)); } // 空=全勾，展开成全选
+      if(cur.has(p)) cur.delete(p); else cur.add(p);
+      const next=HP_PLATS.filter(x=>cur.has(x));  // 固定顺序，去掉重复
+      btn.disabled=true;
+      const ok=await saveScheduleQuiet({profiles:{high:{enabled_platforms:next}}});
+      btn.disabled=false;
+      if(!ok) return;
+      SCH.data.high_enabled_platforms=next;
+      const effective=next.length?next:HP_PLATS;
+      document.querySelectorAll("#highPlats [data-hplat]").forEach(b=>
+        b.setAttribute("aria-pressed",effective.includes(b.dataset.hplat)?"true":"false"));
+    });
+  });
+
+  /* high 强模型清单：勾选启用 / 停用（写 profiles.high.model_order）。
+     R2.5：改 ajax 局部刷新——只更新按钮状态和高亮，不再 load("routes") 整页重绘。 */
+  document.querySelectorAll("[data-hmodel]").forEach(row=>{
+    const btn=row.querySelector("[data-high]"); if(!btn) return;
+    btn.addEventListener("click",async e=>{
+      e.stopPropagation();
+      const model=row.dataset.hmodel;
+      const order=[...(SCH.data?.profiles?.high?.model_order||[])];
+      const i=order.indexOf(model);
+      const enable=i<0;
+      if(i>=0) order.splice(i,1); else order.push(model);
+      btn.disabled=true;
+      const ok=await saveScheduleQuiet({profiles:{high:{model_order:order}}});
+      btn.disabled=false;
+      if(!ok) return;
+      // 同步本地配置（下次整页加载按新顺序排启用项）
+      SCH.data.profiles=SCH.data.profiles||{};
+      SCH.data.profiles.high=SCH.data.profiles.high||{};
+      SCH.data.profiles.high.model_order=order;
+      // 局部刷新按钮与模型名上的 high #N 徽标，不重排 DOM
+      const omodel=row.querySelector(".omodel");
+      btn.setAttribute("aria-pressed",enable?"true":"false");
+      btn.textContent=enable?"已启用":"启用";
+      row.classList.toggle("off",!enable);
+      const oldPill=omodel.querySelector(".pill.info"); if(oldPill) oldPill.remove();
+      if(enable){
+        const rank=order.indexOf(model)+1;
+        const pill=document.createElement("span"); pill.className="pill info";
+        pill.textContent="high #"+rank;
+        omodel.insertBefore(pill,omodel.firstChild);
+      }
+    });
+  });
+
+  /* 手动指定模型（下拉） */
+  const msel=document.getElementById("manualsel");
+  if(msel) msel.addEventListener("change",async()=>{
+    await saveSchedule({manual_model:msel.value||null});
+  });
+
+  /* 清除 P15 遗留手动锁 */
+  const clb=document.getElementById("clearlockbtn");
+  if(clb) clb.addEventListener("click",async()=>{
+    try{
+      await postJSON("schedule",{clear_legacy_lock:true});
+      toast("已清除手动锁，恢复自动调度");
+      await load("routes");
+    }catch(err){ toast("清除失败："+err.message); }
+  });
+
+  /* 停用 / 启用模型 */
+  document.querySelectorAll("[data-ban]").forEach(b=>b.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const row=b.closest(".orderrow");
+    const model=row.dataset.model;
+    const list=new Set(d.disabled_models||[]);
+    if(list.has(model)) list.delete(model); else list.add(model);
+    await saveSchedule({disabled_models:[...list]});
+  }));
+
+  /* 上移 / 下移：DOM 已移动，只 quiet 保存，不整页重绘 */
+  document.querySelectorAll("[data-mv]").forEach(b=>b.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const row=b.closest(".orderrow");
+    if(b.dataset.mv==="up") row.previousElementSibling&&row.previousElementSibling.before(row);
+    else row.nextElementSibling&&row.nextElementSibling.after(row);
+    // R2.7：上移/下移 quiet 保存 + 手动同步按钮，不再整页重绘（消除跳动）。
+    const order=[...document.querySelectorAll("#orderlist .orderrow")].map(r=>r.dataset.model);
+    if(await saveScheduleQuiet({ui_low_order:order})) syncLowManualUi(order);
+  }));
+
+  bindOrderDnD("orderlist",saveOrder);
+  // high 列表拖拽：只调整「已启用」模型的先后顺序（写 profiles.high.model_order）
+  bindOrderDnD("highlist",saveHighOrder);
+
+  const pb=document.getElementById("probebtn");
+  if(pb) pb.addEventListener("click",async()=>{
+    pb.disabled=true; pb.textContent="探测中…";
+    try{
+      const r=await postJSON("probe",{});
+      toast(r.skipped?("没探："+(r.reason||"")):("探了 "+(r.probed||0)+" 次"));
+      await load("routes");
+    }catch(err){ toast("探针失败："+err.message); }
+    finally{ pb.disabled=false; pb.textContent="跑一轮探针"; }
+  });
+
+  /* P41：预览请求长度（免费只在一段长度内，长度变了排序也变） */
+  const lenSel=document.getElementById("lenSel");
+  if(lenSel) lenSel.addEventListener("change",async()=>{
+    SCH_TOKENS=Number(lenSel.value)||200;
+    await load("routes");
+  });
+
+  /* P41：标定价格曲线（后台跑 + 轮询进度；一次 5N 次请求要几分钟） */
+  const cb=document.getElementById("calibbtn");
+  if(cb) cb.addEventListener("click",async()=>{
+    cb.disabled=true; cb.textContent="启动中…";
+    try{
+      const r=await postJSON("pricing/calibrate",{limit:8});
+      if(!r.started){ toast("标定已在跑："+(r.current||"")); return; }
+      toast("标定已启动，正在后台跑");
+      await pollCalibrate(cb);
+    }catch(err){ toast("启动失败："+err.message); cb.disabled=false; cb.textContent="标定价格曲线"; }
+  });
+}
+
+async function saveOrder(){
+  const rows=[...document.querySelectorAll("#orderlist .orderrow")];
+  const order=rows.map(r=>r.dataset.model);
+  // R2.7：只写 UI 展示顺序，quiet 保存 + 手动同步按钮，不整页重绘（消除跳动）。
+  // 不动 strategy/model_order——那会改变真实调度，把付费模型拖到前面就破坏免费优先。
+  if(await saveScheduleQuiet({ui_low_order:order})) syncLowManualUi(order);
+}
+/* high 列表拖拽只调整已启用项的先后（未启用项不进 model_order）。 */
+async function saveHighOrder(){
+  const rows=[...document.querySelectorAll("#highlist .orderrow")];
+  const order=rows.filter(r=>!r.classList.contains("off")).map(r=>r.dataset.hmodel);
+  await saveScheduleQuiet({profiles:{high:{model_order:order}}});
+  SCH.data.profiles=SCH.data.profiles||{};
+  SCH.data.profiles.high=SCH.data.profiles.high||{};
+  SCH.data.profiles.high.model_order=order;
+  // 更新 high #N 徽标
+  rows.forEach(r=>{
+    const om=r.querySelector(".omodel"); const p=om&&om.querySelector(".pill.info");
+    if(p&&!r.classList.contains("off")){
+      const rank=order.indexOf(r.dataset.hmodel)+1; p.textContent="high #"+rank;
+    }
+  });
+}
+
+/* R2.5：模型列表拖拽排序——改用 Pointer Events，手机端触摸也能拖。
+   只在 .handle 上启动拖拽（handle 有 touch-action:none），这样列表其余区域
+   仍可正常纵向滚动，不会和拖拽冲突；鼠标/触摸走同一套逻辑。 */
+function bindOrderDnD(listId,onSave){
+  const list=document.getElementById(listId);
+  if(!list) return;
+  let dragEl=null, startY=0, moved=false, pid=null;
+  /* R2.6：pointermove/pointerup 挂在 document，不挂 handle，也不用 setPointerCapture。
+     原因：pointermove 里 target.before(dragEl) 会把 DOM 节点搬走，浏览器因此释放
+     pointer capture，后续事件不再发给 handle —— 真机实测 pointerup 收不到、
+     touchdrag class 清不掉、onSave 不触发（表现为"拖了没反应"）。
+     挂 document 后，无论节点怎么搬，move/up 都能收到。 */
+  const onMove=e=>{
+    if(!dragEl) return;
+    if(pid!=null && e.pointerId!==pid) return;
+    if(Math.abs(e.clientY-startY)<4 && !moved) return;
+    moved=true;
+    e.preventDefault();
+    const y=e.clientY;
+    const siblings=[...list.querySelectorAll(".orderrow")].filter(r=>r!==dragEl&&!r.classList.contains("folded"));
+    let target=null;
+    for(const s of siblings){
+      const r=s.getBoundingClientRect();
+      if(y>=r.top&&y<=r.bottom){ target=s; break; }
+    }
+    if(target){
+      const rect=target.getBoundingClientRect();
+      if(y<rect.top+rect.height/2) target.before(dragEl);
+      else target.after(dragEl);
+    }
+  };
+  const end=e=>{
+    if(!dragEl) return;
+    if(pid!=null && e && e.pointerId!=null && e.pointerId!==pid) return;
+    dragEl.classList.remove("touchdrag");
+    dragEl=null; pid=null;
+    if(moved) onSave();
+    moved=false;
+  };
+  list.querySelectorAll(".orderrow").forEach(row=>{
+    const handle=row.querySelector(".handle");
+    if(!handle) return;
+    handle.addEventListener("pointerdown",e=>{
+      // 未启用的 high 项不允许拖（handle 已置灰），low 项都可拖
+      if(row.classList.contains("off") && listId==="highlist") return;
+      e.preventDefault();
+      dragEl=row; startY=e.clientY; moved=false; pid=e.pointerId;
+      row.classList.add("touchdrag");
+    });
+  });
+  document.addEventListener("pointermove",onMove,{passive:false});
+  document.addEventListener("pointerup",end);
+  document.addEventListener("pointercancel",end);
+}
+
+/* ==================== 接入 ==================== */
+function renderGuide(){
+  const c=CONFIG||{};
+  const apiBase=c.api_base||(location.origin+PREFIX+"/v1");
+  const base=c.base_url||(location.origin+PREFIX);
+  const acc=c.access||{};
+  const blocks=(c.blocks||[]).map(b=>{
+    const long=b.code.split("\n").length>12;   // 长配置默认收起，页面不至于拖太久
+    return `
+    <div class="cfg">
+      <h3>${esc(b.title)}</h3>
+      <p>${esc(b.hint)}</p>
+      <div class="code">
+        <div class="copyrow">
+          <button class="copy" data-copy="${esc(b.id)}">复制这份配置</button>
+          ${long?`<button class="toggle" data-toggle="${esc(b.id)}">展开</button>`:""}
+        </div>
+        <pre id="pre-${esc(b.id)}"${long?" hidden":""}${b.nowrap?' style="white-space:pre;overflow-x:auto"':""}><code id="blk-${esc(b.id)}">${esc(b.code)}</code></pre>
+      </div>
+    </div>`;
+  }).join("");
+  return `
+  <div class="group"><div class="ghead">地址</div><div class="card">
+    <div class="kvrow"><span class="k">接口地址</span><span class="v">${esc(apiBase)}</span>
+      <button class="mini" data-copy-url="${esc(apiBase)}">复制</button></div>
+    ${acc.https_api&&acc.https_api!==apiBase?`<div class="kvrow"><span class="k">手机用 HTTPS${acc.https_kind==="tunnel"?"（临时）":""}</span><span class="v">${esc(acc.https_api)}</span>
+      <button class="mini" data-copy-url="${esc(acc.https_api)}">复制</button></div>`:""}
+    <div class="kvrow"><span class="k">后台</span><span class="v">${esc(base)}/admin</span>
+      <button class="mini" data-copy-url="${esc(base)}/admin">复制</button></div>
+    <div class="kvrow"><span class="k">模型名</span><span class="v">${esc(c.public_model||"low")}</span>
+      ${c.active_model&&c.active_model!==c.public_model?`<span class="aside">当前上游 ${esc(c.active_model)}</span>`:""}
+      <button class="mini" data-copy-url="${esc(c.public_model||"low")}">复制</button></div>
+    <div class="kvrow"><span class="k">模型名 · 强</span><span class="v">${esc(c.high_model||"high")}</span>
+      <span class="aside">固定走指定的强模型</span>
+      <button class="mini" data-copy-url="${esc(c.high_model||"high")}">复制</button></div>
+    <div class="kvrow"><span class="k">密钥</span><span class="v" id="keyv">${esc(c.api_key?maskKey(c.api_key):"未配置")}</span>
+      <button class="mini" id="keytoggle">显示</button>
+      <button class="mini" data-copy-url="${esc(c.api_key||"")}">复制</button></div>
+  </div></div>
+  <div class="note">${acc.note?esc(acc.note)+"。":""}密钥随配置块一起复制，别转发。</div>
+
+  <div class="group"><div class="ghead">一键复制（已填入真实地址与密钥）</div><div class="card">${blocks}</div></div>
+
+  <div class="group"><div class="ghead">验证连通</div><div class="card">
+    <div class="step"><div class="num">✓</div><div>
+      <h3>让网关真的发一次消息</h3>
+      <p>走完整链路，消耗一次调用额度。</p>
+      <button class="btn" id="testbtn" style="margin-top:10px">发送测试请求</button>
+      <div id="testout"></div>
+    </div></div>
+  </div></div>
+
+  `;
+}
+
+function maskKey(k){ return k.length<=8? "••••" : k.slice(0,4)+"••••••"+k.slice(-4); }
+
+function bindCopy(){
+  document.querySelectorAll(".copy").forEach(btn=>btn.addEventListener("click",async()=>{
+    const target=document.getElementById("blk-"+btn.dataset.copy);
+    const code=target?target.textContent:"";
+    const ok=await copyText(code);
+    btn.textContent=ok?"已复制 ✓":"请长按选择复制";
+    btn.classList.toggle("done",ok);
+    setTimeout(()=>{btn.textContent="复制这份配置";btn.classList.remove("done");},1600);
+  }));
+  document.querySelectorAll("[data-copy-url]").forEach(btn=>btn.addEventListener("click",async()=>{
+    const v=btn.dataset.copyUrl||"";
+    if(!v){ toast("没有可复制的内容"); return; }
+    const ok=await copyText(v);
+    const old=btn.textContent; btn.textContent=ok?"已复制":"失败";
+    setTimeout(()=>btn.textContent=old,1400);
+  }));
+  document.querySelectorAll("[data-toggle]").forEach(btn=>btn.addEventListener("click",()=>{
+    const pre=document.getElementById("pre-"+btn.dataset.toggle);
+    const hidden=pre.hasAttribute("hidden");
+    if(hidden) pre.removeAttribute("hidden"); else pre.setAttribute("hidden","");
+    btn.textContent=hidden?"收起":"展开";
+  }));
+  const tg=document.getElementById("keytoggle");
+  if(tg){
+    tg.addEventListener("click",()=>{
+      const c=CONFIG||{};
+      const el=document.getElementById("keyv");
+      const shown=tg.dataset.shown==="1";
+      el.textContent=shown?maskKey(c.api_key||"未配置"):(c.api_key||"未配置");
+      tg.dataset.shown=shown?"0":"1";
+      tg.textContent=shown?"显示":"隐藏";
+    });
+  }
+}
+
+function bindTest(){
+  const btn=document.getElementById("testbtn");
+  if(!btn) return;
+  btn.addEventListener("click",async()=>{
+    const out=document.getElementById("testout");
+    btn.disabled=true; btn.textContent="请求中…";
+    out.innerHTML='<div class="loader"><span class="spin"></span> 正在向上游发一条消息…</div>';
+    try{
+      const r=await postJSON("test",{});
+      if(!r.ok){
+        out.innerHTML=`<div class="testbox err"><b>没通</b><div class="reply">${esc(r.error||"未知错误")}</div>
+          <div class="meta">耗时 ${msText(r.latency_ms||0)}</div></div>`;
+      }else{
+        out.innerHTML=`<div class="testbox ok"><b>通了 · 模型原文</b>
+          <div class="reply">${esc(r.reply)}</div>
+          <div class="meta">上游模型 ${esc(r.model)} · 对外模型 ${esc(r.public_model)} ·
+            耗时 ${msText(r.latency_ms)} · ${r.credit==null?"扣费未知":"扣费 "+num(r.credit)+" 积分"}</div></div>`;
+      }
+    }catch(e){
+      out.innerHTML=`<div class="testbox err"><b>没通</b><div class="reply">${esc(e.message)}</div></div>`;
+    }finally{ btn.disabled=false; btn.textContent="再测一次"; }
+  });
+}
+
+/* ==================== 导航 ==================== */
+function selectTab(p){
+  LIVE.tab=p;
+  document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-selected",String(x.dataset.p===p)));
+  history.replaceState(null,"",location.pathname+"?"+new URLSearchParams({...Object.fromEntries(QS),tab:p}));
+  load(p);
+  // 实时刷新：切 tab 后立刻按新 tab 重启节奏（避免沿用上个 tab 的倒计时）
+  armLive();
+}
+document.querySelectorAll(".seg button").forEach(b=>b.addEventListener("click",()=>selectTab(b.dataset.p)));
+document.getElementById("chip").addEventListener("click",()=>selectTab("models"));
+
+async function refreshChip(){
+  try{
+    const d=await getJSON("state");
+    const chip=document.getElementById("chip");
+    document.getElementById("chipModel").textContent=d.active_model||"—";
+    chip.classList.toggle("paid",!!d.manual);
+    const acc=d.account;
+    document.getElementById("topSub").textContent=[
+      d.public_model||"low",
+      /* R1 Q5：顶栏平台名也用缩写，与列表角标一致（PLAT_SHORT 同源） */
+      acc?(PLAT_SHORT[(acc.platform||"").toLowerCase()]||acc.platform_label):null,
+      acc?acc.label:null,
+    ].filter(Boolean).join(" · ");
+  }catch{ document.getElementById("chipModel").textContent="—"; }
+}
+
+/* ==================== 实时刷新（R2.7） ====================
+   用户诉求：用量汇总的请求次数/请求明细、以及各 tab 的视图数据要自动刷新，
+   方便在页面上实时监控、排查问题。
+
+   设计原则：**只刷数据、不重置交互状态**。整页 load(p) 会把 M.open/SW.idx
+   等交互态重置（展开的分组收起、时间轴回放到头），所以这里按 tab 做数据级刷新：
+   - accounts：清今天的数据缓存 → 重绘汇总区 + 所有展开账号，保留
+     US.day/metric/chart/mode/hour（选中的日期/维度/图形/模式/展开的小时）。
+   - requests：重拉列表 + 切换历史，保留 SW.view/idx/筛选/播放态。
+   - models/routes/security：能保留状态的保留，其余重新取数。
+   页面切到后台时暂停（visibilitychange），省电省流量。 */
+const LIVE={
+  enabled:true,
+  interval:5000,          // 5 秒；测试排查够实时，又不至于把上游打爆
+  tab:"models",
+  timer:null,
+  busy:false,             // 防止上一轮没结束又来一轮
+  lastAt:0,
+};
+function liveStatus(text,on){
+  const el=document.getElementById("liveDot");
+  if(!el) return;
+  el.classList.toggle("on",!!on);
+  el.title=text;
+  const t=document.getElementById("liveText");
+  if(t) t.textContent=text;
+}
+async function liveRefresh(){
+  if(!LIVE.enabled||LIVE.busy||document.hidden) return;
+  const p=LIVE.tab;
+  if(p==="guide") return;              // 接入页是配置/测试表单，不自动刷
+  LIVE.busy=true;
+  const when=new Date();
+  liveStatus("正在刷新 "+pad2(when.getHours())+":"+pad2(when.getMinutes())+":"+pad2(when.getSeconds()),true);
+  try{
+    if(p==="accounts"){
+      // R2.7：后台取数到缓存（失败保留旧 DOM），全部就绪后一次性重绘，避免空白帧。
+      // 保留 US.day/metric/chart/mode/hour 交互状态；展开小时明细同步重拉。
+      const labels=["__all__",...[...ACC.open].filter(lb=>lb!=="__all__")];
+      await Promise.all(labels.map(lb=>refreshAccountData(lb)));
+      labels.forEach(repaintHours);
+      try{ await loadForecast(); paintFreeBar(); paintFreeBadges(); }catch{}  // 健康度 + FREE 角标
+    }else if(p==="requests"){
+      // 数据级刷新：重拉列表与切换历史，保留 SW 交互态，只重绘不 bind 重复事件。
+      let d=null,sw=null;
+      try{ d=await getJSON("requests"); }catch{}
+      try{ sw=(await getJSON("switch-history?days=7")).items||[]; }catch{}
+      if(d){
+        const items=d.items||d;
+        const box=document.getElementById("reqList");
+        if(box) patchDOM(box,reqRowsHTML(items));
+      }
+      if(sw){ SW.segs=sw; swDraw(); }
+    }else if(p==="models"){
+      let d;
+      try{ d=await getJSON("models"); }catch{ d=null; }
+      if(d){
+        M.items=d.items||[]; M.activeAcc=d.active_account||null;
+        M.active=M.items.find(x=>x.active)||null;
+        paintModels();
+      }
+      try{ await loadForecast(); }catch{}
+      paintFreeBar();
+    }else if(p==="routes"){
+      // 配置页（拖拽/下拉/开关），不自动刷，避免打断操作
+      return;
+    }else if(p==="security"){
+      let d; try{ d=await getJSON("security"); }catch{ d=null; }
+      if(d) renderSecurity(d);
+    }
+    LIVE.lastAt=Date.now();
+    liveStatus("已刷新 "+hhmm(Math.floor(LIVE.lastAt/1000)),true);
+  }catch(e){
+    liveStatus("刷新失败："+(e.message||"error").slice(0,30),false);
+  }finally{ LIVE.busy=false; }
+}
+function armLive(){
+  if(LIVE.timer){ clearInterval(LIVE.timer); LIVE.timer=null; }
+  if(!LIVE.enabled||document.hidden||LIVE.tab==="guide"||LIVE.tab==="routes") return;
+  LIVE.timer=setInterval(liveRefresh,LIVE.interval);
+}
+/* R2.28：实时开关用单色 SVG 时钟/暂停，不再用会变彩色 emoji 的 ⏱/⏸ 码点。 */
+function paintLiveToggle(){
+  const btn=document.getElementById("liveToggle"); if(!btn) return;
+  btn.setAttribute("aria-pressed",String(LIVE.enabled));
+  btn.innerHTML=(LIVE.enabled?SVG_LIVE:SVG_PAUSE)+(LIVE.enabled?"实时":"暂停");
+}
+function toggleLive(){
+  LIVE.enabled=!LIVE.enabled;
+  paintLiveToggle();
+  liveStatus(LIVE.enabled?"实时刷新已开":"实时刷新已暂停",LIVE.enabled);
+  armLive();
+}
+
+(async function init(){
+  await loadConfig();
+  if(CONFIG) document.getElementById("topSub").textContent=CONFIG.public_model+" · 网关";
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden){ if(LIVE.timer){clearInterval(LIVE.timer);LIVE.timer=null;} }
+    else armLive();
+  });
+  const liveBtn=document.getElementById("liveToggle");
+  if(liveBtn) liveBtn.addEventListener("click",toggleLive);
+  paintLiveToggle();   // R2.28：首屏渲染单色 SVG 图标（替代 emoji）
+  selectTab(QS.get("tab")||"models");
+  refreshChip();
+  // R2.5：横竖屏/窗口缩放后按新宽度重算流向图/时间轴侧边留白，避免又挤成一竖条。
+  let rsTimer=null;
+  window.addEventListener("resize",()=>{
+    if(SW.view==="recent"||!SW.chart) return;
+    clearTimeout(rsTimer);
+    rsTimer=setTimeout(()=>{ try{ SW.chart.resize(); swDraw(); }catch(_e){} },150);
+  });
+})();
+</script>
+</body>
+</html>

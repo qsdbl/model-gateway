@@ -1,0 +1,40 @@
+# Codex App 桌面客户端专用配置（顶层，不是 profile）——模板，密钥占位
+#
+# 依据：
+# - Codex App 只读 ~/.codex/config.toml 顶层值；--profile 只有 CLI 支持。
+#   https://developers.openai.com/codex/config-reference
+# - 关闭自动注入块的原因（上游 11128）见 README P12：
+#   https://developers.openai.com/codex/config-reference
+# 说明：本文件由 scripts/codex-app-gateway.sh 在开启「App 网关模式」时
+# 复制为 ~/.codex/config.toml（原文件先备份），__MGW_KEY__ 会被替换为真实
+# 网关密钥，写入后文件权限 0600，不进 git、不进日志。
+
+model = "low"
+model_provider = "gateway"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+model_instructions_file = "./docs/examples/codex-gateway-instructions.md"
+include_permissions_instructions = false
+include_apps_instructions = false
+include_collaboration_mode_instructions = false
+
+[features]
+plugins = false
+memories = false
+# App / CLI 的 hooks.json SessionStart 输出会以 developer 消息触发上游 11128
+hooks = false
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[model_providers.gateway]
+name = "gateway"
+base_url = "http://your-server:8080/v1"
+wire_api = "responses"
+requires_openai_auth = false
+# App 由 LaunchServices 启动，拿不到 shell 环境变量，因此用 http_headers
+# 直接带鉴权头（文件 0600）。CLI 版仍走 env_key，密钥不落盘。
+http_headers = { Authorization = "Bearer __MGW_KEY__" }

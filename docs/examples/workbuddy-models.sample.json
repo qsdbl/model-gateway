@@ -1,0 +1,32 @@
+[
+  {
+    "id": "low",
+    "name": "网关·Low（免费优先）",
+    "vendor": "Custom",
+    "url": "https://your-domain.example/gw/v1/chat/completions",
+    "apiKey": "",
+    "supportsToolCall": true,
+    "supportsImages": true,
+    "supportsReasoning": false,
+    "useCustomProtocol": true,
+    "maxOutputTokens": 0
+  },
+  {
+    "id": "high",
+    "name": "网关·High（强模型）",
+    "vendor": "Custom",
+    "url": "https://your-domain.example/gw/v1/chat/completions",
+    "apiKey": "",
+    "supportsToolCall": true,
+    "supportsImages": false,
+    "supportsReasoning": true,
+    "reasoning": {
+      "defaultEffort": "high",
+      "supportedEfforts": [
+        "high"
+      ]
+    },
+    "useCustomProtocol": true,
+    "maxOutputTokens": 0
+  }
+]

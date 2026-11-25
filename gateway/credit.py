@@ -85,3 +85,39 @@ def prompt_tokens_from_sse_chunk(chunk: str) -> int | None:
     if not isinstance(obj, dict):
         return None
     return prompt_tokens_from_usage(obj.get("usage"))
+
+
+def chunk_has_finish_reason(chunk: str) -> bool:
+    """这一帧是否带非空的 `finish_reason`（上游标记「内容已完整吐出」）。
+
+    R2.40 断流误报修复：上游在内容全部发完后、收尾帧 [DONE] 之前偶尔
+    TCP reset。此时内容其实完整，但网关只认异常就报错，客户端既显示完整
+    回答又弹「自定义模型出现错误」。finish_reason 是 OpenAI 规范里内容
+    结束的明确信号（stop / tool_calls / length），收到它就说明内容吐完了。
+
+    finish_reason=null 或没有这个字段 = 内容还没结束（或泛化模型不发），
+    不能据此判定完整——断流时仍要报错，避免把半截回答当成功。
+    """
+    text = chunk.strip()
+    if not text.startswith("data:") or '"finish_reason"' not in text:
+        return False
+    body = text[5:].strip()
+    if not body or body == "[DONE]":
+        return False
+    try:
+        obj = json.loads(body)
+    except Exception:  # noqa: BLE001  半帧/坏帧一律当没结束
+        return False
+    if not isinstance(obj, dict):
+        return False
+    choices = obj.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        reason = choice.get("finish_reason")
+        # 非 None、非空字符串即视为内容结束（stop / tool_calls / length 等）。
+        if reason:
+            return True
+    return False

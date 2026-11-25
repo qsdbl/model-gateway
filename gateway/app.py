@@ -107,6 +107,12 @@ def prompt_tokens_from_sse_chunk(chunk: str) -> int | None:
     return _impl(chunk)
 
 
+def chunk_has_finish_reason(chunk: str) -> bool:
+    """R2.40：这一帧是否带非空 finish_reason（内容已完整吐出）。"""
+    from .credit import chunk_has_finish_reason as _impl
+    return _impl(chunk)
+
+
 # ---------- P35 换号重试的三个小工具 ----------
 def _is_retryable(reason: str) -> bool:
     from .scheduler import is_retryable
@@ -687,6 +693,7 @@ async def chat_completions(request: Request) -> Any:
                         ctx = _use_account_for(cand)
                     produced = False
                     completed = False
+                    finish_seen = False   # R2.40：收到非空 finish_reason = 内容已完整
                     try:
                         async for chunk in _stream_upstream(payload, cand):
                             if await request.is_disconnected():
@@ -701,6 +708,11 @@ async def chat_completions(request: Request) -> Any:
                                 got_tok = prompt_tokens_from_sse_chunk(chunk)
                                 if got_tok is not None:
                                     real_prompt_tokens = got_tok
+                            # R2.40：记录上游是否明确标记「内容已吐完」。
+                            # 断流若发生在 finish_reason 之后，内容其实完整，
+                            # 只差收尾帧 —— 不能当成失败弹错误给用户。
+                            if chunk_has_finish_reason(chunk):
+                                finish_seen = True
                             produced = True
                             last_event_at = time.monotonic()
                             yield chunk
@@ -710,6 +722,21 @@ async def chat_completions(request: Request) -> Any:
                     except _upstream_error_types() as e:
                         last_error = e.reason
                         ended_at = time.monotonic()
+                        # R2.40：内容已完整吐出后、收尾帧前断流 → 静默补 [DONE] 收尾。
+                        # 上游偶发在发完内容+finish_reason 后 TCP reset（差 usage/[DONE]），
+                        # 此时客户端已看到完整回答，再吐 error 帧会让它误报「出现错误」。
+                        # 只有 finish_reason 明确到达才走这条，吐一半断流仍照常报错。
+                        if finish_seen:
+                            yield "data: [DONE]\n\n"
+                            outcome, outcome_error = "success", None
+                            _note_used(cand)
+                            store.log_schedule(
+                                "stream_recovered",
+                                f"{cand.account_label}/{cand.model_name} 内容完整后收尾断流，"
+                                f"已静默补 [DONE]（{e.reason[:80]}）",
+                                "info",
+                            )
+                            break
                         if not produced and attempt < len(cands) and _is_retryable(e.reason):
                             # 换号重试：先记住错误，**绝不能在这里吐 error 帧**。
                             # 否则客户端会先收到 error+[DONE]，再收到下一个候选的内容

@@ -192,6 +192,12 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 /* R2.6：真免费模型用暖橙 FREE 角标，和同名付费模型一眼可分。
    付费方不额外加角标（避免列表噪音），靠「有/无 FREE」区分即可。 */
 .pill.free{color:#B45309;background:rgba(245,158,11,.16)}
+/* 最近调度「同一模型多个账号」的 chip 列表。
+   flex-wrap 天然响应式：宽屏一行放多个、手机端自动换行，不需要 JS 算列数。 */
+.sched-accts{display:flex;flex-wrap:wrap;gap:4px 8px;margin-top:3px}
+.sched-acct{font-size:11px;line-height:15px;color:var(--label-2);white-space:nowrap}
+.sched-acct b{color:var(--label-1);font-weight:600}
+.sched-acct i{font-style:normal;color:var(--label-3)}
 .dotst{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
 .dotst.ok{background:var(--ok)} .dotst.err{background:var(--err)} .dotst.warn{background:var(--warn)}
 
@@ -1460,22 +1466,40 @@ function paintModels(){
   if(rs && rs.total>0 && (rs.items||[]).length){
     const win=rs.window_minutes||5;
     const label=n=>n===1?"1 次":n+" 次";
-    // 聚合行：平台角标 + 模型 + 账号 + 次数 + 价格（免费池→免费，付费→倍率）
-    const rowsHtml=(rs.items||[]).slice(0,8).map(it=>{
-      const inPool=!!it.is_free_pool;
+    /* R2.47：同平台 + 同模型的多个账号合并成一行，账号用 flex-wrap 的 chip 铺开——
+       宽屏一行放得下就都放一行，手机端自动换行（不需要 JS 算列数）。
+       后端 items 仍按 (平台,模型,账号) 聚合，这里按 (平台,模型) 二次归并，不动后端。 */
+    const groups=[];
+    const gi=new Map();
+    for(const it of (rs.items||[])){
+      const k=(it.platform||"?")+"|"+it.model_name;
+      let g=gi.get(k);
+      if(!g){ g={platform:it.platform,model:it.model_name,
+        price_factor:it.price_factor,is_free_pool:it.is_free_pool,accts:[],last_at:0};
+        gi.set(k,g); groups.push(g); }
+      g.accts.push(it);
+      g.last_at=Math.max(g.last_at,it.last_at||0);
+      if(g.price_factor==null) g.price_factor=it.price_factor;
+    }
+    groups.sort((a,b)=>b.last_at-a.last_at);
+    // 当前正在被调用的模型 = 模型列表的对勾口径（M.active），随 5 秒刷新一起更新
+    const activeModel=M.active&&M.active.model_name;
+    const rowsHtml=groups.slice(0,8).map(g=>{
+      const inPool=!!g.is_free_pool;
       let price;
       if(inPool) price="免费";
-      else if(it.price_factor!=null) price=num(it.price_factor)+"x";
-      else price=null;
+      else if(g.price_factor!=null) price=num(g.price_factor)+"x";
       const pill=price?`<span class="pill ${inPool?"free":"info"}">${esc(price)}</span>`:"";
-      /* R2.45：用户要「每个模型最新的调用时间」，不要「切换轨迹 旧→新」那行。
-         轨迹是给流向图看的，这里一行 8 个模型挤成一条箭头链，读不出「现在」。
-         last_at 由 requests 表算，模型 tab 本身已经 5 秒刷一次，时间会跟着跳。 */
-      const at=it.last_at?` · 最近 ${hhmmss(it.last_at)}`:"";
-      return `<div class="row"><div class="rmain">
-        <div class="rtitle">${platBadge(it.platform)} ${esc(it.model_name)} ${pill}</div>
-        <div class="rsub">账号 ${esc(dispLabel(it.account_label))} · ${label(it.count)}${at}</div>
-      </div></div>`;
+      const tick=(activeModel&&g.model===activeModel)?'<span class="tick" title="当前调度选中的模型">✓</span>':"";
+      const accts=g.accts.slice().sort((a,b)=>(b.last_at||0)-(a.last_at||0)).map(a=>{
+        const at=a.last_at?` · ${hhmmss(a.last_at)}`:"";
+        return `<span class="sched-acct"><b>${esc(dispLabel(a.account_label))}</b><i> · ${label(a.count)}${at}</i></span>`;
+      }).join("");
+      const many=g.accts.length>1?`<span class="pill plain">${g.accts.length} 账号</span>`:"";
+      return `<div class="row${tick?" active":""}"><div class="rmain">
+        <div class="rtitle">${platBadge(g.platform)} ${esc(g.model)} ${pill}${many}</div>
+        <div class="sched-accts">${accts}</div>
+      </div>${tick?`<div class="rright">${tick}</div>`:""}</div>`;
     }).join("");
     h+=`<div class="group"><div class="ghead">最近 ${win} 分钟 · 实际调度</div><div class="card">
       ${rowsHtml}
@@ -2116,9 +2140,10 @@ function platBadge(platform,label){
 
 /* R1.1：哪些账号当前有可用免费模型 —— 从 /free-forecast 拿 free_accounts，
    在账号行标题后加 FREE 角标。结果缓存在 US.health，重绘不重复请求。 */
-async function loadForecast(){
-  if(US.health) return US.health;
-  try{ US.health=await getJSON("free-forecast"); }catch(e){ US.health={health:{free_accounts:{}}}; }
+async function loadForecast(force){
+  if(US.health && !force) return US.health;
+  try{ US.health=await getJSON("free-forecast"); }
+  catch(e){ if(!US.health) US.health={health:{free_accounts:{}}}; }
   return US.health;
 }
 function paintFreeBadges(){
@@ -4427,7 +4452,7 @@ async function liveRefresh(){
       const labels=["__all__",...[...ACC.open].filter(lb=>lb!=="__all__")];
       await Promise.all(labels.map(lb=>refreshAccountData(lb)));
       labels.forEach(repaintHours);
-      try{ await loadForecast(); paintFreeBar(); paintFreeBadges(); }catch{}  // 健康度 + FREE 角标
+      try{ await loadForecast(true); paintFreeBar(); paintFreeBadges(); }catch{}  // 健康度 + FREE 角标（强制拉新）
     }else if(p==="requests"){
       // 数据级刷新：重拉列表与切换历史，保留 SW 交互态，只重绘不 bind 重复事件。
       let d=null,sw=null;
@@ -4449,7 +4474,7 @@ async function liveRefresh(){
         M.active=M.items.find(x=>x.active)||null;
         paintModels();
       }
-      try{ await loadForecast(); }catch{}
+      try{ await loadForecast(true); }catch{}   // 免费池强制拉新（含新扫码账号）
       paintFreeBar();
     }else if(p==="routes"){
       // 配置页（拖拽/下拉/开关），不自动刷，避免打断操作

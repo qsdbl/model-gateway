@@ -3,9 +3,9 @@
 双部署设计（README 第 2.1 节）要求：零硬编码路径、端口/监听可配。
 """
 from __future__ import annotations
-import re
 
 import os
+import re
 from pathlib import Path
 
 # 项目根 = 本文件(gateway/config.py)的上两级
@@ -19,11 +19,10 @@ def _env_path(name: str, default: str) -> Path:
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
-_GPT5_ALIAS_RE = re.compile(r"^gpt[-_]?5(?:\.\d+)?$", re.IGNORECASE)
-
-
 class Settings:
     """运行时配置。所有值在实例化时从环境读取一次。"""
+
+    _GPT5_ALIAS_RE = re.compile(r"^gpt[-_]?5(?:\.\d+)?$", re.IGNORECASE)
 
     def __init__(self) -> None:
         # 监听：默认只回环，符合安全红线；服务器部署改环境变量 + HTTPS 反代
@@ -114,7 +113,7 @@ class Settings:
         if not model_name:
             return model_name
         name = model_name.strip()
-        if _GPT5_ALIAS_RE.match(name):
+        if self._GPT5_ALIAS_RE.match(name):
             return self.low_model
         return name
 

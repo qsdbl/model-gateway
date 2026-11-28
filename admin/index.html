@@ -226,6 +226,9 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 /* R2.38：凭据续期失败/过期的红色「重新授权」按钮 + 行内告警文字。
    依据 Apple HIG 语义色：告警用系统红，正文对比度 ≥4.5:1（深色模式用亮红）。 */
 .qbtn.danger{background:var(--err);color:#fff;border-color:transparent}
+/* 账号展开区「从网关剔除」按钮——红色描边（区别于填充的重新授权）。 */
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn.danger:hover{background:var(--err);color:#fff}
 .reauth-hint{color:var(--err);font-weight:600;margin-right:6px}
 
 /* 指引 / 代码块 */
@@ -2060,12 +2063,15 @@ function accountRow(x){
       ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
       : (x.auth_status==="ok"?"余额已读取":"状态未知"));
   if(routeNote) sub = sub ? `${sub} · ${routeNote}` : routeNote;
-  // R2.38：续期失败 / 凭据已过期 → 醒目提示 + 行尾红色「重新授权」按钮。
-  // 数据由后端 /accounts 的 x.renew.needs_reauth 给出（阈值与告警邮件一致）。
-  const rn=x.renew||{}, needsReauth=!!rn.needs_reauth;
-  const reauthHint = needsReauth
-    ? (rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权" : "凭据已过期 · 需重新授权")
-    : "";
+  // 续期失败 / 凭据过期 / 读不到账单（余额未知）→ 红色「重新授权」。
+  // 数据由后端 /accounts 给出：renew.needs_reauth 是续期告警口径；
+  // balance==null 说明 token 读不到账单（可能已失效），同样要能一键重新扫码。
+  const rn=x.renew||{};
+  const noBalance = !isQ && x.balance==null;
+  const needsReauth = !!rn.needs_reauth || noBalance;
+  const reauthHint = rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权"
+    : (rn.days_left!=null && rn.days_left<=0) ? "凭据已过期 · 需重新授权"
+    : noBalance ? "读不到账单 · 需重新授权" : "";
   const right = x.balance!=null
     ? `<span class="bal">${creditText(x.balance)}<i>积分</i></span>`
     : pill("余额未知","warn");
@@ -2116,6 +2122,7 @@ function accountRow(x){
       <div class="kv"><span>有效期</span><b>${esc(daysLeftText((x.credential||{}).expires_at))}</b></div>
       <div class="kv"><span>文件</span><b>${esc((x.credential||{}).file||"—")}</b></div>
       ${x.active?"":(x.inference===false?"":`<button class="btn secondary" data-switch="${esc(x.label)}" style="margin-top:10px">切换到此账号</button>`)}
+      <button class="btn secondary danger" data-remove="${esc(x.label)}" data-platform="${esc(x.platform||"workbuddy")}" style="margin-top:10px">从网关剔除此账号</button>
     </div>`;
   return `<div class="row tap${x.active?" active":""}" data-acc="${esc(x.label)}">
     <div class="rmain">
@@ -2245,6 +2252,20 @@ function bindAccountActions(){
     if(!ok) return;
     if(plat==="qoder") qoderAuthDialog(label);
     else importDialog({reauth:true});
+  }));
+  /* 从网关彻底剔除账号（删凭据文件 + 登记 + 告警），不可撤销，二次确认。 */
+  document.querySelectorAll("[data-remove]").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const label=btn.dataset.remove, plat=btn.dataset.platform||"workbuddy";
+    const ok=await dialog({title:"从网关剔除账号？",danger:true,confirmText:"确认剔除",
+      rows:[["账号",dispLabel(label)],["说明","删除凭据文件与登记，该账号立即停用且不可恢复"]]});
+    if(!ok) return;
+    const old=btn.textContent; btn.disabled=true; btn.textContent="剔除中…";
+    try{
+      const r=await postJSON("accounts/remove",{label,platform:plat});
+      toast("已剔除 "+dispLabel(label)+(r.removed_files&&r.removed_files.length?("（"+r.removed_files.join("、")+"）"):""));
+      await load("accounts");
+    }catch(err){ toast("剔除失败："+err.message); btn.disabled=false; btn.textContent=old; }
   }));
   document.querySelectorAll("[data-qcheck]").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation();
@@ -2520,12 +2541,15 @@ function importDialog(opts){
         ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
         // R2.38：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
         const acc=r.account||{};
-        // 账号名一律过 dispLabel：底层 label（如「主号」）是内部标签，
-        // 展示必须是手机号掩码，别把「主号」露出去。
+        // 账号名一律过 dispLabel：底层 label 是内部标签，展示用掩码。
         const shown=dispLabel(acc.label||"账号");
-        toast(acc.replaced
-          ? `该账号已存在，已更新登录状态：${shown}`
-          : `已添加：${shown}`);
+        if(r.verified===false){
+          toast(`扫码完成，但凭据未通过验证：${shown}。请确认扫的是该账号本人，必要时用官方 CLI 重新登录。`);
+        }else{
+          toast(acc.replaced
+            ? `该账号已存在，已更新登录状态：${shown}`
+            : `已添加：${shown}`);
+        }
         await refreshChip();
         load("accounts");
       }catch(e){
@@ -2588,12 +2612,16 @@ function importDialog(opts){
       const r=await postJSON("accounts/import",{content});
       stopped=true; clearInterval(timer);
       ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
-      // R2.38：区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
+      // 区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
       const acc=r.account||{};
       const shown=dispLabel(acc.label||"账号");
-      toast(acc.replaced
-        ? `该账号已存在，已更新登录状态：${shown}`
-        : `已添加：${shown}`);
+      if(r.verified===false){
+        toast(`已导入，但凭据未通过验证：${shown}。token 可能已失效，账号行会显示红色「重新授权」。`);
+      }else{
+        toast(acc.replaced
+          ? `该账号已存在，已更新登录状态：${shown}`
+          : `已添加：${shown}`);
+      }
       await refreshChip();
       load("accounts");
     }catch(e){
@@ -2767,6 +2795,9 @@ function renderSecurity(d){
   h+=`<div class="row tap" id="emailTest"><div class="rmain"><div class="rtitle">发一封测试邮件</div>
     <div class="rsub">${em.ready ? "" : "先填邮箱并配置 SMTP"}</div></div>
     <div class="rright"><span class="mono">→</span></div></div>`;
+  h+=`<div class="row tap" id="signinRun"><div class="rmain"><div class="rtitle">跑一轮签到并发日报</div>
+    <div class="rsub wrap">走网关定时任务那套：签到 + 积分核对 + 发签到日报卡片（约 10~60 秒）</div></div>
+    <div class="rright"><span class="mono">→</span></div></div>`;
   h+='</div></div>';
 
   const logins=dedupeEvents(d.logins||[]);
@@ -2839,6 +2870,24 @@ function bindSecurity(){
       const r=await postJSON("security/email/test",{});
       toast(r.ok ? ("已发到 "+r.to+"，去收件箱看看") : ("没发出去："+r.message));
     }catch(e){ toast("发信失败："+e.message); }
+  };
+  /* 手动触发一轮签到+日报（走网关定时任务同一套 daily_report.run） */
+  const sr=document.getElementById("signinRun");
+  if(sr) sr.onclick=async ()=>{
+    const ok=await dialog({title:"跑一轮签到并发日报？",
+      message:"会真实调用各平台签到接口并发出一封签到日报邮件，约 10~60 秒。",
+      confirmText:"开始"});
+    if(!ok) return;
+    const old=sr.querySelector(".rtitle").textContent;
+    sr.querySelector(".rtitle").textContent="签到进行中…";
+    try{
+      const r=await postJSON("signin/run?mail=1",{});
+      if(r.ok!==true){ toast("签到失败："+(r.error||r.message||"未知原因")); return; }
+      const mailTip = r.mail_sent ? "邮件已发出，去收件箱看看"
+        : (r.mail_failed ? "签到完成但邮件没发出去，检查发件邮箱配置" : "未配置发信");
+      toast(`签到完成：${r.ok_count??"?"}/${r.total??"?"} 成功 · ${mailTip}`);
+    }catch(e){ toast("触发失败："+e.message); }
+    finally{ sr.querySelector(".rtitle").textContent=old; }
   };
   const se=document.getElementById("smtpEdit");
   if(se) se.onclick=async ()=>{

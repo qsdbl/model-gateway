@@ -662,9 +662,19 @@ async def api_import_account(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="content 必填且不能超过 200KB")
     from .credentials import ImportError_, import_credential
     try:
+        # import_credential 内部已用只读账单接口实测 token（_verify），
+        # 通不过会抛 ImportError_ 被上面的 400 挡掉。能走到这里就是验证通过的。
         result = import_credential(content, label=label, filename=filename)
     except ImportError_ as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # 让紧随其后的账号列表读到刚导入的新凭据，而不是 60s 旧缓存。
+    try:
+        from .app import _wb_balance_cache
+
+        _wb_balance_cache.pop(result["label"], None)
+    except Exception:
+        pass
     # 登记进 DB（启用 + 余额），列表马上能看到；凭据内容不进 DB
     store.upsert_account(
         label=result["label"], platform="workbuddy",
@@ -675,10 +685,55 @@ async def api_import_account(request: Request) -> dict:
         store.update_balance(
             result["label"], result["balance"], "credits_workbuddy", time.time()
         )
-    # 重新扫码 = 人工恢复了登录态，清掉之前的续期失败告警；
-    # 否则账号行的红色「重新授权」按钮会一直挂着，明明已经修好了。
     store.clear_renew_state(result["label"], "workbuddy")
-    return {"ok": True, "account": result}
+    return {"ok": True, "account": result, "verified": True}
+
+
+@admin.post("/accounts/remove")
+async def api_remove_account(request: Request) -> dict:
+    """把一个账号从网关彻底剔除：删凭据文件 + DB 登记 + 告警状态。"""
+    require_admin_token(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json")
+    label = (body or {}).get("label") or ""
+    platform = str((body or {}).get("platform") or "workbuddy").lower()
+    if not isinstance(label, str) or not label.strip():
+        raise HTTPException(status_code=400, detail="label 必填")
+    label = label.strip()
+
+    removed_files: list[str] = []
+    cred_dir = Path(settings.credential_dir).expanduser()
+    if not cred_dir.is_absolute():
+        cred_dir = Path(__file__).resolve().parent.parent / cred_dir
+    candidates = [cred_dir / f"{label}.info"]
+    if platform == "qoder":
+        bare = label.split(":", 1)[1] if ":" in label else label
+        candidates.append(cred_dir / f"{bare}.qoder.json")
+    for path in candidates:
+        try:
+            if path.is_file():
+                path.unlink()
+                removed_files.append(path.name)
+        except Exception:
+            pass
+
+    store.delete_account(label)
+    if not label.startswith("qoder:"):
+        store.delete_account(f"qoder:{label}")
+    try:
+        store.clear_renew_state(label, "WorkBuddy")
+        store.clear_renew_state(label, "Qoder")
+    except Exception:
+        pass
+    try:
+        from .app import _wb_balance_cache
+
+        _wb_balance_cache.pop(label, None)
+    except Exception:
+        pass
+    return {"ok": True, "label": label, "removed_files": removed_files}
 
 
 @admin.get("/models")

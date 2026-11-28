@@ -35,6 +35,7 @@
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -295,14 +296,21 @@ def _locked_unavailable_reason(locked_acc: str, rejected: list[dict[str, str]]) 
         return "凭据已失效（上游 401），需要重新扫码授权"
     no_balance = "余额为 0" in joined
     cooldown = next((s for s in reasons if "冷却中" in s), "")
+    cool_at = _cooldown_time(cooldown)
     if no_balance and cooldown:
-        until = cooldown.split("冷却中", 1)[-1].strip()
-        return f"积分已用完（余额 0），付费模型不能用；免费模型额度也耗尽，{until} 才恢复"
+        return (f"积分已用完（余额 0），付费模型不能用；"
+                f"免费模型额度也耗尽，{cool_at} 才恢复")
     if no_balance:
         return "积分已用完（余额 0），付费模型不能用（免费模型可能仍在冷却）"
     if cooldown:
-        return f"免费模型额度用完{cooldown.split('冷却中', 1)[-1]}，付费模型未启用"
+        return f"免费模型额度用完（{cool_at} 恢复），付费模型未启用"
     return "、".join(dict.fromkeys(reasons))[:120] or "没有可用模型"
+
+
+def _cooldown_time(reason: str) -> str:
+    """从「冷却中（到 13:04）」里取出「13:04」；取不到就退回原句。"""
+    m = re.search(r"到\s*([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)", reason or "")
+    return m.group(1) if m else (reason or "稍后").strip()
 
 
 

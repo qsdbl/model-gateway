@@ -872,7 +872,8 @@ const balanceText=(v,u)=>{
   return num(v)+" "+(unitOf(u)||"");
 };
 const priceText=x=>{
-  if(x.pricing==="free"||x.is_free) return "免费";
+  // R2.39b：免费判定统一走官方免费池真源（is_free_pool），不用 DB 的 is_free 猜。
+  if(x.is_free_pool||x.pricing==="free") return "免费";
   if(x.pricing==="dynamic") return "浮动";
   if(x.price_factor==null) return "未标价";
   const f=Number(x.price_factor);
@@ -1285,7 +1286,7 @@ async function load(p){
   let d;
   try{ d=await getJSON(p==="routes"?("schedule?tokens="+SCH_TOKENS):p); }
   catch(e){ if(e.auth) return; body.innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>'; return; }
-  if(p==="models") renderModels(d.items||d, d.active_account||null);
+  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null);
   else if(p==="accounts") renderAccounts(d);
   else if(p==="requests"){
     // P48：切换历史单独取（折叠后的段），失败不影响请求列表本身
@@ -1332,13 +1333,15 @@ function defaultOpen(scope){
   return ["free","low"];
 }
 
-function renderModels(items,activeAcc){
+function renderModels(items,activeAcc,recentSchedule){
   const body=document.getElementById("body");
   M.items=items||[];
   /* 账号信息要跨函数用：卡片是在 paintModels() 里画的，不是 renderModels。
      之前把它当参数往下传，paintModels 拿不到 → ReferenceError → 整张卡片
      连同整个模型列表都不渲染。放进全局状态才安全。 */
   M.activeAcc=activeAcc||null;
+  // R2.39b：最近窗口的真实调度聚合（与用量日志同口径）
+  M.recentSchedule=recentSchedule||M.recentSchedule||null;
   if(!M.items.length){ body.innerHTML='<div class="empty">暂无模型数据</div>'; return; }
   M.active=M.items.find(x=>x.active)||null;
   M.open=new Set(defaultOpen(M.scope));
@@ -1443,30 +1446,47 @@ function paintModels(){
   const visible=M.items.filter(modelVisible);
   if(!visible.length){ box.innerHTML='<div class="empty">没有匹配的模型</div>'; return; }
   let h="";
-  // 当前使用：始终置于顶部，带「手动/默认」来源与重置入口
-  if(M.active){
+  // R2.39b：模型 tab 与用量日志统一口径 —— 顶部卡片显示**最近窗口的真实调度**，
+  // 不再是「典型短请求预览」。数据来自 /models 的 recent_schedule（requests 表）。
+  const rs=M.recentSchedule;
+  if(rs && rs.total>0 && (rs.items||[]).length){
+    const win=rs.window_minutes||5;
+    const label=n=>n===1?"1 次":n+" 次";
+    // 聚合行：平台角标 + 模型 + 账号 + 次数 + 价格（免费池→免费，付费→倍率）
+    const rowsHtml=(rs.items||[]).slice(0,8).map(it=>{
+      const inPool=!!it.is_free_pool;
+      let price;
+      if(inPool) price="免费";
+      else if(it.price_factor!=null) price=num(it.price_factor)+"x";
+      else price=null;
+      const pill=price?`<span class="pill ${inPool?"free":"info"}">${esc(price)}</span>`:"";
+      return `<div class="row"><div class="rmain">
+        <div class="rtitle">${platBadge(it.platform)} ${esc(it.model_name)} ${pill}</div>
+        <div class="rsub">账号 ${esc(dispLabel(it.account_label))} · ${label(it.count)}</div>
+      </div></div>`;
+    }).join("");
+    // 切换段：说明「在谁之间调度切换」
+    const segs=(rs.segments||[]).slice(-6).reverse();
+    const segHtml=segs.length?`<div class="rsub" style="margin-top:6px;color:var(--label-3)">切换轨迹（旧→新）：${segs.map(s=>
+      `${platBadge(s.platform)} ${esc(dispLabel(s.account_label))}/${esc(s.model_name)}`).join(" → ")}</div>`:"";
+    h+=`<div class="group"><div class="ghead">最近 ${win} 分钟 · 实际调度</div><div class="card">
+      ${rowsHtml}${segHtml}
+    </div></div>`;
+  } else if(M.active){
+    // 无最近请求时才退回调度预览（口径与调度器一致，只认真免费池）
     const a=M.active;
-    /* P48：明确写「调度器预览」而不是「当前使用」——每次请求会在账号×模型池里
-       重新择优，这个只是「典型短请求会选谁」。接入页同一口径，两边不再打架。 */
-    /* P49：账号和模型必须同源 —— 后端 active_account 就是调度器候选计划里
-       那个候选（同一套 _active_upstream()），不是「余额最多的那个」。
-       旧写法依赖 CONFIG.account，而模型页初始化时 CONFIG 还没加载完，
-       导致「账号」那一截经常不显示。 */
     const acc=M.activeAcc||(CONFIG&&CONFIG.account?CONFIG.account:null);
-    /* R2.39：免费口径按新规矩——只有官方真免费池模型（is_free_pool）才贴「免费」。
-       付费模型短请求免扣（est_cost=0）只是「本次未扣费」，绝不叫免费；
-       也不再显示「≤N token 免费」这种按长度叙事（那是旧口径）。 */
     const inFreePool=!!a.is_free_pool;
-    const activePrice = a.est_cost==null ? priceText(a)
-      : (a.est_cost===0
-          ? (inFreePool?"免费池 · 本次 0 积分":"付费模型 · 本次未扣费")
-          : "付费模型 · 本次 "+num(a.est_cost)+" 积分");
-    const priceCls = (a.est_cost!=null && a.est_cost===0 && inFreePool)?"free":"info";
+    const activePrice = inFreePool ? "免费"
+      : (a.est_cost!=null && a.est_cost>0
+          ? "付费 · "+num(a.est_cost)+" 积分/次"
+          : (a.price_factor!=null ? "付费 · "+num(a.price_factor)+"x" : "付费"));
+    const priceCls = inFreePool?"free":"info";
     h+=`<div class="group"><div class="ghead">当前选中 · 自动调度预览</div><div class="card">
       <div class="row active"><div class="rmain">
         <div class="rtitle">${esc(a.display_name||a.model_name)}<span class="pill ${priceCls}">${esc(activePrice)}</span></div>
         <div class="rsub">${esc(a.model_name)} · 对外名 ${esc(a.public_name||"")}${acc?(" · 账号 "+platBadge(acc.platform,dispLabel(acc.label))+" "+esc(dispLabel(acc.label))):""} · 调度预览</div>
-        <div class="rsub" style="margin-top:4px;color:var(--label-3)">这是典型短请求的预览；每次请求会按当时长度重新择优，实际模型见用量汇总。付费模型短请求可能免扣，不代表属于免费池。</div>
+        <div class="rsub" style="margin-top:4px;color:var(--label-3)">最近没有请求；这是短请求的调度预览，免费只认官方免费池，付费按倍率计。</div>
       </div><div class="rright"><span class="tick">✓</span></div></div>
     </div></div>`;
   }
@@ -3553,11 +3573,11 @@ function schTgl(label,on,cls){ return `<button class="tgl ${cls||""}" data-sch="
 
 function schMeta(m){
   const bits=[];
-  const inPool=!!m.is_free_pool;   // R2.39：只认官方真免费池，不用 est_cost==0 推断
-  if(m.est_cost!=null){
-    if(m.est_cost===0) bits.push(inPool?"免费池 · 0 积分":"付费模型 · 本次未扣费");
-    else bits.push("付费模型 · 本次 "+num(m.est_cost)+" 积分");
-  } else bits.push("未标价");
+  // R2.39b：免费就免费，不免费写清楚倍率（与用户拍板的口径一致，不再啰嗦）
+  const inPool=!!m.is_free_pool;
+  if(inPool) bits.push("免费");
+  else if(m.price_factor!=null) bits.push("付费 · "+num(m.price_factor)+"x");
+  else bits.push("未标价");
   if(m.flat_credit!=null) bits.push("按次 "+num(m.flat_credit));
   if(m.points) bits.push(m.points+" 个实测点");
   return bits.join(" · ");
@@ -4375,6 +4395,7 @@ async function liveRefresh(){
       try{ d=await getJSON("models"); }catch{ d=null; }
       if(d){
         M.items=d.items||[]; M.activeAcc=d.active_account||null;
+        M.recentSchedule=d.recent_schedule||null;
         M.active=M.items.find(x=>x.active)||null;
         paintModels();
       }

@@ -755,6 +755,19 @@ async def api_remove_account(request: Request) -> dict:
     return {"ok": True, "label": label, "removed_files": removed_files}
 
 
+def _recent_schedule_view(recent: dict) -> dict:
+    """给 recent_schedule 的聚合项补免费池身份字段。
+
+    R2.39b：用户要求「免费就免费，不免费写清楚倍率」。倍率直接用请求落库时
+    记录的 price_factor 快照（store.recent_schedule 已带出）；这里只补
+    is_free_pool（freepool 唯一真源）。
+    """
+    from .freepool import is_official_free
+    for it in recent.get("items") or []:
+        it["is_free_pool"] = bool(is_official_free(it.get("model_name")))
+    return recent
+
+
 @admin.get("/models")
 async def api_models(request: Request) -> dict:
     require_admin_token(request)
@@ -762,8 +775,13 @@ async def api_models(request: Request) -> dict:
     if not rows:
         # R1.3：live 分支（线上实际走这条）已在 _live_models 里挂了实测价格，
         # 这里再兜一次底，保证「当前模型」卡片永远显示本次免费/扣费而非「未标价」。
+        try:
+            recent = _recent_schedule_view(store.recent_schedule(window_minutes=5))
+        except Exception:
+            recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
         return {"items": _attach_preview_price(_live_models(), _active_preview()),
-                "active_account": _active_upstream_account()}
+                "active_account": _active_upstream_account(),
+                "recent_schedule": recent}
     import time
     # P48：这里原来用 effective_model()（P15 手动锁/默认值），和接入页的
     # _active_upstream_model()（问调度器实际会选谁）口径不同 —— 同一个"当前模型"
@@ -806,7 +824,14 @@ async def api_models(request: Request) -> dict:
         })
     # 把预览候选的实测价格挂到 active 项上（只挂 active，避免影响列表排序）
     _attach_preview_price(items, active_preview)
-    return {"items": items, "active_account": _active_upstream_account()}
+    # R2.39b：模型 tab 与用量日志统一口径——直接给最近窗口的**真实调度**记录。
+    # 有请求时前端用它替换「典型短请求预览」，没请求时才退回预览。
+    try:
+        recent = _recent_schedule_view(store.recent_schedule(window_minutes=5))
+    except Exception:
+        recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
+    return {"items": items, "active_account": _active_upstream_account(),
+            "recent_schedule": recent}
 
 
 @admin.get("/free-forecast")

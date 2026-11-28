@@ -444,6 +444,71 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def recent_schedule(self, window_minutes: int = 5) -> dict[str, Any]:
+        """R2.39b：最近 N 分钟的**真实调度**聚合（模型 tab 用量口径对齐）。
+
+        用户诉求：模型 tab 以前是「典型短请求预览」，用量汇总是历史真实请求，
+        两边对不上还各说各话。这里直接读 requests 表的真实记录，返回：
+        - window_minutes：统计窗口
+        - total：窗口内请求总数
+        - items：按 (platform, model_name, account_label) 聚合，各带次数和最近一次时间
+        - segments：按时间正序的切换段（连续相同 账号×模型 折叠），展示「在谁之间切换」
+        """
+        cutoff = time.time() - max(1, window_minutes) * 60
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT platform, model_name, account_label, created_at, status,
+                          price_factor
+                   FROM requests
+                   WHERE account_label IS NOT NULL AND model_name IS NOT NULL
+                     AND created_at >= ?
+                   ORDER BY id ASC""",
+                (cutoff,),
+            ).fetchall()
+        rows = [dict(r) for r in rows]
+        from collections import Counter
+        agg = Counter((r["platform"] or "?", r["model_name"],
+                       r["account_label"]) for r in rows)
+        items = [
+            {
+                "platform": p, "model_name": m, "account_label": a,
+                "count": n,
+                # 目录倍率快照（请求落库时记录的）；多次取最新一条非空值
+                "price_factor": next(
+                    (r["price_factor"] for r in reversed(rows)
+                     if (r["platform"] or "?") == p and r["model_name"] == m
+                     and r["account_label"] == a
+                     and r["price_factor"] is not None), None),
+                "last_at": max(r["created_at"] for r in rows
+                               if (r["platform"] or "?") == p
+                               and r["model_name"] == m
+                               and r["account_label"] == a),
+            }
+            for (p, m, a), n in agg.items()
+        ]
+        items.sort(key=lambda x: (-x["count"], -x["last_at"]))
+        # 切换段：连续相同 (账号, 模型) 折叠
+        segments: list[dict[str, Any]] = []
+        for r in rows:
+            key = (r["account_label"], r["model_name"], r["platform"])
+            if segments and segments[-1]["key"] == key:
+                segments[-1]["count"] += 1
+                segments[-1]["until"] = r["created_at"]
+            else:
+                segments.append({
+                    "key": key, "account_label": r["account_label"],
+                    "model_name": r["model_name"], "platform": r["platform"],
+                    "count": 1, "since": r["created_at"], "until": r["created_at"],
+                })
+        for s in segments:
+            s.pop("key", None)
+        return {
+            "window_minutes": window_minutes,
+            "total": len(rows),
+            "items": items,
+            "segments": segments[-12:],   # 最多回看 12 段，防止刷屏
+        }
+
     def switch_history(self, limit: int = 300, days: int | None = None) -> list[dict[str, Any]]:
         """把最近的请求按「连续相同 (账号, 模型)」折叠成切换段。
 

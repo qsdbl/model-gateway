@@ -88,7 +88,8 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
                     balance: float | None, daily_total: float | None = None,
                     price_factor: float | None = None,
                     choose_reason: str | None = None,
-                    free_alternatives: list[str] | None = None) -> bool:
+                    free_alternatives: list[str] | None = None,
+                    platform: str | None = None) -> bool:
     """low 模式本次请求选了付费模型 → 当天首次发一封提醒。
 
     返回是否真的发了邮件。去重标记按天滚动，存 settings 表。
@@ -96,7 +97,8 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     R2.39（用户诉求）：邮件要说清「这次为什么用了付费模型」——
     - `price_factor`：目录倍率（付费池身份的证据，不是「免费吗」的判据）；
     - `choose_reason`：调度器给出的选模原因；
-    - `free_alternatives`：本次真免费模型为什么没用上（429/冷却等）。
+    - `free_alternatives`：本次真免费模型为什么没用上（429/冷却等）；
+    - `platform`：账号所在平台（WorkBuddy / Qoder），用户要求写明账号是谁家的。
     开头那句「免费模型不可用，已自动切换付费」是旧叙事——按新口径，
     免费池只认官方真免费模型（hy4flash-free），付费短请求免扣不代表免费，
     所以改成中性的「本次用了付费模型」，不再暗示「免费池没了」。
@@ -107,6 +109,13 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     if sent_on == today:
         return False
     account_disp = display_label(account)
+    # R2.39b：账号行带平台，一眼看出是谁家的号（WorkBuddy / Qoder）
+    plat_disp = (platform or "").strip()
+    if plat_disp:
+        # 不 import admin（防循环依赖）；这张小表与 admin.PLATFORM_LABELS 保持一致
+        plat_disp = {"workbuddy": "WorkBuddy", "qoder": "Qoder"}.get(
+            plat_disp.lower(), plat_disp)
+    account_row = (f"{plat_disp} · {account_disp}" if plat_disp else account_disp)
     cost_text = f"{float(cost):.2f}" if cost is not None else "未知（价格无观测数据）"
     bal_text = f"{float(balance):.2f}" if balance is not None else "未知"
     total_text = f"{float(daily_total):.2f}" if daily_total is not None else "（今日累计见后台记录页）"
@@ -126,7 +135,7 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
         ("倍率", factor_text),
         ("为何选它", reason_text),
         ("免费模型为何没用上", free_text),
-        ("账号", account_disp),
+        ("账号", account_row),
         ("本次扣费", f"{cost_text} 积分"),
         ("当前余额", bal_text),
         ("今日累计", total_text),
@@ -137,7 +146,7 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
         + f"倍率：{factor_text}\n"
         + f"为何选它：{reason_text}\n"
         + f"免费模型为何没用上：{free_text}\n"
-        + f"账号：{account_disp}\n"
+        + f"账号：{account_row}\n"
         + f"本次扣费：{cost_text} 积分\n"
         + f"当前余额：{bal_text}\n"
         + f"今日累计：{total_text}\n\n"

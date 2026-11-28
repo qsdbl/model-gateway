@@ -592,6 +592,7 @@ async def chat_completions(request: Request) -> Any:
                 price_factor=chosen.price_factor,
                 choose_reason=plan.reason,
                 free_alternatives=free_fallback_summary(plan.rejected),
+                platform=chosen.platform,
             )
         except Exception:
             pass

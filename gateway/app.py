@@ -630,26 +630,7 @@ async def chat_completions(request: Request) -> Any:
     # R2.22：路由一确定就把实际模型/账号回填到 pending 记录，
     # 让「进行中」的明细行也显示真实模型名而不是 unknown（不必等 finalize）。
     store.attach_route(req_id, **route_fields)
-    # R1 提醒（low）：本次选中了付费模型 → 当天首封提醒。
-    # R2.52：只有免费池耗尽（free_pairs==0）才发；单次超时回落付费不发。
-    if current_mode() == "low" and chosen.est_cost is not None and chosen.est_cost > 0:
-        try:
-            from . import notify
-            exhausted, _fp_status = notify.free_pool_exhausted()
-            if exhausted:
-                from .scheduler import free_fallback_summary
-                notify.note_paid_start(
-                model=chosen.model_name, account=chosen.account_label,
-                cost=chosen.est_cost, balance=chosen.balance,
-                daily_total=store.credit_today(),
-                price_factor=chosen.price_factor,
-                choose_reason=plan.reason,
-                free_alternatives=free_fallback_summary(plan.rejected),
-                platform=chosen.platform,
-                free_pool_status=_fp_status,
-            )
-        except Exception:
-            pass
+    # R2.54：「开始消耗积分」提醒移到结算后（见 finalize）——改「真扣费就发」。
     # P19/P35：多账号 —— 把路由选中的账号带进上游调用（流式在生成器内部再设一次，
     # 因为异步生成器可能在另一个上下文里被迭代）。
     account_label = chosen.account_label
@@ -722,6 +703,26 @@ async def chat_completions(request: Request) -> Any:
             choose_reason=route_fields["choose_reason"],
             **extra,
         )
+        # R2.54：扣费已落库。两类提醒都只在「真扣费」时触发，失败不影响响应。
+        _real_credit = extra.get("actual_credit")
+        if status == "success" and _real_credit is not None and float(_real_credit) > 0:
+            try:
+                from . import notify
+                if current_mode() == "low":
+                    from .scheduler import free_fallback_summary
+                    notify.note_paid_start(
+                        model=route_fields["model_name"],
+                        account=route_fields["account_label"],
+                        cost=float(_real_credit), balance=chosen.balance,
+                        daily_total=store.credit_today(),
+                        price_factor=chosen.price_factor,
+                        choose_reason=route_fields["choose_reason"],
+                        free_alternatives=free_fallback_summary(plan.rejected),
+                        platform=route_fields["platform"],
+                    )
+                notify.check_credit_threshold()
+            except Exception:
+                pass
 
     if stream:
         async def event_stream() -> AsyncIterator[str]:

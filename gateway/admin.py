@@ -2146,7 +2146,17 @@ async def api_security(request: Request) -> dict:
     """「安全」页：当前会话 + 策略 + 最近登录/失败 + 封禁名单（P17）。"""
     from .admin_auth import security_snapshot
     require_admin_token(request)
-    return security_snapshot(request)
+    snap = security_snapshot(request)
+    # R2.54：积分消耗提醒配置（安全页邮件区展示）
+    try:
+        ca = (router.load_config().get("credit_alert") or {})
+        snap["credit_alert"] = {
+            "enabled": bool(ca.get("enabled", True)),
+            "step": float(ca.get("step", 100) or 100),
+        }
+    except Exception:
+        snap["credit_alert"] = {"enabled": True, "step": 100}
+    return snap
 
 
 @admin.post("/security/unban")
@@ -2223,6 +2233,37 @@ async def api_set_mail_settings(request: Request) -> dict:
         store.set_setting("mail_" + k, val)
     from .mailer import mail_status
     return {"ok": True, **mail_status()}
+
+
+# R2.54：每累计 N 积分提醒的配置（放 routes.json，安全页邮件区可改）。
+@admin.get("/credit-alert")
+async def api_get_credit_alert(request: Request) -> dict:
+    require_admin_token(request)
+    cfg = (router.load_config().get("credit_alert") or {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    return {"enabled": bool(cfg.get("enabled", True)),
+            "step": float(cfg.get("step", 100) or 100)}
+
+
+@admin.post("/credit-alert")
+async def api_set_credit_alert(request: Request) -> dict:
+    require_admin_token(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json")
+    body = body or {}
+    cfg = router.load_config()
+    try:
+        step = float(body.get("step", 100) or 100)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid step")
+    if step <= 0 or step > 100000:
+        raise HTTPException(status_code=400, detail="step out of range")
+    cfg["credit_alert"] = {"enabled": bool(body.get("enabled", True)), "step": step}
+    router.save_config(cfg)
+    return {"ok": True, **cfg["credit_alert"]}
 
 
 @admin.post("/security/email/test")

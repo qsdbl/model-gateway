@@ -386,8 +386,95 @@ def check_low_balance(*, account: str, platform: str, balance: float | None) -> 
     return ok
 
 
+# ---------------- R2.54：每累计 N 积分提醒一次 ----------------
+# WB / Qoder 积分是不同货币，按平台各自独立累计、各自独立触发；绝不混加。
+# 当日累计，跨天自动重置（key 里带日期）。达到 N 的整数倍各发一封：
+# 100 → 200 → 300…，若一次跳过多档（单请求扣很多），只发「当前跨到的最高档」，
+# 并把已发档位记到最新，避免补发一串历史档位。
+_CREDIT_ALERT_KEY = _PREFIX + "credit_alert_sent"
+
+
+def _credit_alert_cfg() -> dict:
+    """读阈值配置（routes.json 的 credit_alert），失败回默认。"""
+    try:
+        from .app import router
+        cfg = router.load_config().get("credit_alert") or {}
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def check_credit_threshold() -> bool:
+    """每次请求结算后调用：按平台看当日累计扣费是否跨过配置的整数倍档位。"""
+    cfg = _credit_alert_cfg()
+    if not cfg.get("enabled", True):
+        return False
+    try:
+        step = float(cfg.get("step", 100) or 100)
+    except (TypeError, ValueError):
+        step = 100.0
+    if step <= 0:
+        return False
+
+    today = date.today().isoformat()
+    seen = _get_json(_CREDIT_ALERT_KEY, {})
+    if not isinstance(seen, dict):
+        seen = {}
+
+    try:
+        by_platform = store.credit_today_by_platform()
+    except Exception:
+        return False
+
+    sent = False
+    for platform, total in by_platform.items():
+        total = float(total or 0)
+        reached = int(total // step)
+        if reached < 1:
+            continue
+        plat_key = str(platform or "unknown")
+        state = seen.get(plat_key) or {}
+        if not isinstance(state, dict):
+            state = {}
+        if state.get("day") == today and int(state.get("tier", 0)) >= reached:
+            continue
+        tier_credit = reached * step
+        plat_disp = {"workbuddy": "WorkBuddy", "qoder": "Qoder"}.get(
+            plat_key.lower(), plat_key)
+        subject = f"[网关] {plat_disp} 累计消耗 {tier_credit:g} 积分"
+        intro = (f"{plat_disp} 今天的累计消耗已达到 {tier_credit:g} 积分"
+                 f"（每 {step:g} 积分提醒一次）。")
+        rows = [
+            ("平台", plat_disp),
+            ("当日累计", f"{total:.2f}"),
+            ("本次提醒档位", f"{tier_credit:g}"),
+            ("提醒间隔", f"每 {step:g} 积分"),
+        ]
+        text = (intro + "\n\n"
+                + f"平台：{plat_disp}\n"
+                + f"当日累计：{total:.2f}\n"
+                + f"本次提醒档位：{tier_credit:g}\n"
+                + f"提醒间隔：每 {step:g} 积分\n")
+        html = mailer.card_html(
+            title=f"{plat_disp} 积分消耗提醒",
+            subtitle=f"{today} · 累计达到 {tier_credit:g} 积分",
+            badge=f"{tier_credit:g} 积分",
+            rows=rows, cta="", link="", intro=intro,
+            footnote="两个平台的积分分开统计、分别提醒；当日累计，每天归零重新计。",
+            section_title="消耗概况",
+            grad="#7A3B12,#A8551B", button_color="#A8551B",
+            badge_fg="#B45309", badge_bg="#FEF3C7",
+        )
+        if _send(subject, text, html=html):
+            seen[plat_key] = {"day": today, "tier": reached}
+            sent = True
+    if sent:
+        _set_json(_CREDIT_ALERT_KEY, seen)
+    return sent
+
+
 def reset_state() -> None:
     """仅用于测试/手动重置：清掉所有 R1 提醒状态。"""
     for suffix in ("low_paid_sent_on", _BAL_HISTORY_KEY.replace(_PREFIX, ""),
-                   "high_low_alerted"):
+                   "high_low_alerted", "credit_alert_sent"):
         store.set_setting(_PREFIX + suffix, "")

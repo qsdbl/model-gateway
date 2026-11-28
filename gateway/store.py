@@ -1240,6 +1240,20 @@ class Store:
             ).fetchone()
         return float(row["c"] or 0.0) if row else 0.0
 
+    # R2.54：按平台拆分的当日真实扣费。WB / Qoder 积分是不同货币，绝不混加——
+    # 阈值提醒只看各自平台的累计值。return dict[platform] -> float。
+    def credit_today_by_platform(self) -> dict[str, float]:
+        day = time.strftime("%Y-%m-%d")
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT platform, coalesce(sum(actual_credit), 0) AS c
+                   FROM requests
+                   WHERE date(created_at,'unixepoch','localtime')=?
+                   GROUP BY platform""",
+                (day,),
+            ).fetchall()
+        return {str(r["platform"] or "unknown"): float(r["c"] or 0.0) for r in rows}
+
     # R1 双模式统计：`public_model` 的过滤条件。历史数据是 personal-agent
     # （low 模式的直接前身，配置镜像），按建议归入 low，保证历史曲线不断档。
     # 返回 (sql_fragment, params)；model in (None,"all") 时不过滤。

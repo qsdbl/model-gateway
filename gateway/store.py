@@ -1343,6 +1343,8 @@ class Store:
                 "public_mode": mode,
                 "requests": n,
                 "credit": round(credit, 4),
+                # R2.53：模型分布随指标切换显示 token，聚合要带上 token 分量。
+                "tokens": tokens,
             })
         total_requests = sum(b["requests"] for b in hours)
         total_errors = sum(b["errors"] for b in hours)
@@ -1360,11 +1362,12 @@ class Store:
         for b in hours:
             for m in b["models"]:
                 cur = models.setdefault(m["name"], {
-                    "name": m["name"], "requests": 0, "credit": 0.0,
+                    "name": m["name"], "requests": 0, "credit": 0.0, "tokens": 0,
                     "public_mode": m.get("public_mode", "low"),
                 })
                 cur["requests"] += m["requests"]
                 cur["credit"] += m["credit"] or 0
+                cur["tokens"] += m.get("tokens", 0)
         order = sorted(models.values(), key=lambda m: m["requests"], reverse=True)
         return {
             "day": day,

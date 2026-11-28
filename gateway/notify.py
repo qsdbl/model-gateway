@@ -21,7 +21,7 @@ from typing import Any
 
 from . import mailer
 from .config import settings
-from .display import display_label
+from .display import display_label, scrub_text
 from .store import store
 
 _PREFIX = "notify.r1."
@@ -84,12 +84,23 @@ def _send(subject: str, text: str, html: str | None = None) -> bool:
 
 # ---------------- low：开始消耗积分 ----------------
 
+def _current_free_pool_text() -> str:
+    """当前免费池健康度（如「2/2 可用」）；取数失败留空，绝不因它影响发信。"""
+    try:
+        from .forecast import _pool_health
+        h = _pool_health()
+        return f"{h.get('free_pairs')}/{h.get('free_capacity')} 可用"
+    except Exception:
+        return ""
+
+
 def note_paid_start(*, model: str, account: str, cost: float | None,
                     balance: float | None, daily_total: float | None = None,
                     price_factor: float | None = None,
                     choose_reason: str | None = None,
                     free_alternatives: list[str] | None = None,
-                    platform: str | None = None) -> bool:
+                    platform: str | None = None,
+                    free_pool_status: str | None = None) -> bool:
     """low 模式本次请求选了付费模型 → 当天首次发一封提醒。
 
     返回是否真的发了邮件。去重标记按天滚动，存 settings 表。
@@ -122,19 +133,33 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     factor_text = (
         f"x{float(price_factor):g}" if price_factor is not None else "目录未标价"
     )
-    reason_text = (choose_reason or "按本次预计扣费择优").strip()
+    # R2.50：reason / free_alternatives 是调度原样透传的自由文本，可能拼了
+    # 内部 label，绕过「账号」字段的脱敏。出邮件前统一 scrub。
+    reason_text = scrub_text((choose_reason or "按本次预计扣费择优").strip())
     free_text = (
-        "；".join(free_alternatives)
+        "；".join(scrub_text(x) for x in free_alternatives)
         if free_alternatives else "本次官方免费模型不可用（限流 / 冷却 / 未标定）"
     )
+    # R2.50：免费池此刻的真实状态——用户反复问「明明还有免费账号为什么扣费」，
+    # 直接把 X/Y 写进邮件，配合下面的回落说明，避免误以为免费池耗尽。
+    if free_pool_status is None:
+        free_pool_status = _current_free_pool_text()
     subject = "[网关] low 开始消耗积分"
-    intro = "本次调度选中了一个付费模型，开始消耗账号积分。"
-    footnote = "当天首次提醒，后续不再单独发信。付费模型短请求可能免扣，不代表它属于免费池。"
+    intro = (
+        "本次调度选中了一个付费模型，开始消耗账号积分。通常是首选免费模型"
+        "这一次请求临时失败（超时 / 限流）后自动回落到付费候选，"
+        "并不代表免费池已经耗尽。"
+    )
+    footnote = (
+        "当天首次提醒，后续不再单独发信。付费模型短请求可能免扣，不代表它属于免费池。"
+        "免费模型恢复后会自动回到免费池，无需手动干预。"
+    )
     rows = [
         ("模型", model),
         ("倍率", factor_text),
         ("为何选它", reason_text),
         ("免费模型为何没用上", free_text),
+        ("当前免费池", free_pool_status or "未知"),
         ("账号", account_row),
         ("本次扣费", f"{cost_text} 积分"),
         ("当前余额", bal_text),
@@ -146,6 +171,7 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
         + f"倍率：{factor_text}\n"
         + f"为何选它：{reason_text}\n"
         + f"免费模型为何没用上：{free_text}\n"
+        + f"当前免费池：{free_pool_status or '未知'}\n"
         + f"账号：{account_row}\n"
         + f"本次扣费：{cost_text} 积分\n"
         + f"当前余额：{bal_text}\n"

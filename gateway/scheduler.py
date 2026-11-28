@@ -103,9 +103,15 @@ def _candidate_pool(
     if not models and not q_models:
         return out, rejected
 
+    _cd_rows = store.list_cooldowns()
     cooldowns = {
         (c["account_label"], c["model_name"]): float(c["until_at"])
-        for c in store.list_cooldowns()
+        for c in _cd_rows
+    }
+    # R2.50：容量分母基准池要区分临时冷却与 6004 长期额度耗尽，带上 reason。
+    cooldown_reasons = {
+        (c["account_label"], c["model_name"]): (c.get("reason") or "")
+        for c in _cd_rows
     }
     now = time.time()
 
@@ -150,14 +156,20 @@ def _candidate_pool(
                 continue
             until = cooldowns.get((label, mid))
             cooling = bool(until and until > now)
-            if cooling and not ignore_cooldowns:
-                rejected.append({
-                    "account": label, "model": mid,
-                    "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
-                })
-                continue
-            # R2.49：ignore_cooldowns 时冷却项仍进池，但打上 cooldown_until 标记；
-            # 上层用它算「容量分母」，真实调度（默认）冷却项早被 continue 剔除。
+            if cooling:
+                long_cd = _is_long_cooldown(
+                    cooldown_reasons.get((label, mid), ""), until, now)
+                # R2.50：真实调度一律剔除冷却项；基准池（ignore_cooldowns）
+                # 只放行临时冷却，6004/超长冷却仍剔除——否则额度已用完到次日的
+                # 账号被算进容量，2/2 会虚报成 2/3。
+                if not ignore_cooldowns or long_cd:
+                    rejected.append({
+                        "account": label, "model": mid,
+                        "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
+                    })
+                    continue
+            # R2.49：ignore_cooldowns 时临时冷却项仍进池，打上 cooldown_until；
+            # 上层用它算「容量分母」。6004 长期冷却已在上面 continue 剔除。
             curve = curves.get(mid)
             est_cost = curve.cost_at(est_tokens) if curve else None
             out.append(Candidate(
@@ -219,12 +231,16 @@ def _candidate_pool(
             if not mid:
                 continue
             until = cooldowns.get((label, mid))
-            if until and until > now and not ignore_cooldowns:
-                rejected.append({
-                    "account": label, "model": mid,
-                    "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
-                })
-                continue
+            if until and until > now:
+                long_cd = _is_long_cooldown(
+                    cooldown_reasons.get((label, mid), ""), until, now)
+                # R2.50：与 WB 分支同口径——基准池只忽略临时冷却。
+                if not ignore_cooldowns or long_cd:
+                    rejected.append({
+                        "account": label, "model": mid,
+                        "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
+                    })
+                    continue
             out.append(Candidate(
                 account_label=label,
                 platform="qoder",
@@ -258,6 +274,21 @@ def _is_free_pool_by_name(model_name: str | None) -> bool:
     from .freepool import is_official_free
 
     return is_official_free(model_name)
+
+
+def _is_long_cooldown(reason: str, until_at: float, now: float | None = None) -> bool:
+    """是否「长期额度耗尽」冷却（区别于临时超时/连接重置）。
+
+    R2.50：免费池容量分母的基准池（`ignore_cooldowns=True`）要忽略**临时**
+    冷却（超时/连接重置，通常 5 分钟），才算得出「池子本来有几个账号」；
+    但 429 code 6004 是当天额度真的用完到次日，这账号今天确实不能再提供
+    免费模型——把它算进基准容量会把「2/2 满格」错误显示成「2/3」。
+    冷却超过 6 小时也一并视为长期（上游带重置时刻的那种）。
+    """
+    now = time.time() if now is None else now
+    if "6004" in (reason or ""):
+        return True
+    return (float(until_at) - now) > 6 * 3600
 
 
 # 「能力不符」类原因：跟账号状态无关，换个账号也一样被剔除。
@@ -378,7 +409,8 @@ def free_fallback_summary(rejected: list[dict[str, str]]) -> list[str]:
             continue
         seen.add(key)
         reason = (r.get("reason") or "不可用").strip()
-        out.append(f"{mid}@{r.get('account') or '?'}：{reason}")
+        # R2.50：账号走显示名（可能是别名），进邮件前先脱敏。
+        out.append(f"{mid}@{_plain_account(r.get('account') or '?')}：{reason}")
     return out[:6]   # 邮件里别塞太长，最多 6 条
 
 
@@ -677,7 +709,9 @@ def build_plan(
             else f"价格未知（目录倍率 x{top.price_factor}）" if top.price_factor is not None
             else "价格未知"
         )
-        reason += f" → {top.model_name}@{top.account_label}（{cost_text}）"
+        # R2.50：reason 会原样进扣费邮件「为何选它」，必须用显示名，
+        # 不能把内部 label 泄露给用户（此前只脱敏了「账号」字段）。
+        reason += f" → {top.model_name}@{_plain_account(top.account_label)}（{cost_text}）"
     return Plan(candidates=ordered, rejected=rejected, reason=reason, notes=notes)
 
 

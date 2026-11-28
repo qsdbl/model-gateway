@@ -763,11 +763,30 @@ def _recent_schedule_view(recent: dict) -> dict:
     免费池判定始终只认 freepool.is_official_free。
     """
     from .freepool import is_official_free
-    # 目录倍率索引：(platform, model) → price_factor
+    # 倍率索引：(platform, model) → price_factor
     catalog: dict[tuple[str, str], float | None] = {}
+
+    def _put(plat: str, mid: str | None, factor) -> None:
+        if mid:
+            catalog[(plat or "workbuddy", mid)] = factor
+
+    # ① DB 模型表（探针标定后的本地目录）
     try:
         for r in store.list_models():
-            catalog[(r["platform"] or "workbuddy", r["model_name"])] = r["price_factor"]
+            _put(r["platform"] or "workbuddy", r["model_name"], r["price_factor"])
+    except Exception:
+        pass
+    # ② 上游实时目录（线上 models 表可能是空的，上游目录才是真源）
+    try:
+        from . import workbuddy_upstream as _wb
+        for r in _wb.catalog():
+            _put("workbuddy", r.get("model_name"), r.get("credits_factor"))
+    except Exception:
+        pass
+    try:
+        from . import qoder_upstream as _qd
+        for r in _qd.catalog():
+            _put("qoder", r.get("model_name"), r.get("credits_factor"))
     except Exception:
         pass
     for it in recent.get("items") or []:

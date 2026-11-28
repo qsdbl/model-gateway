@@ -375,10 +375,22 @@ def build_plan(
                         if c.account_label != locked_acc:
                             rejected.append({
                                 "account": c.account_label, "model": c.model_name,
-                                "reason": "手动切换账号后未选中",
+                                "reason": "已锁定其他账号",
                             })
                     pool = kept_acc
                     notes.append("手动账号：" + locked_acc)
+                else:
+                    # R2.43：锁定账号不在候选池 → 直接不服务，不静默回退到别的账号。
+                    for c in pool:
+                        rejected.append({
+                            "account": c.account_label, "model": c.model_name,
+                            "reason": f"锁定的账号 {locked_acc} 当前不可用，未回退到本账号",
+                        })
+                    return Plan(
+                        candidates=[], rejected=rejected,
+                        reason=f"已锁定的账号 {locked_acc} 当前不可用（读不到账单/已停用）。"
+                               "请到账号页点「重新授权」恢复，或点「恢复自动调度」。",
+                    )
     except Exception:
         pass
 

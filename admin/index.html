@@ -725,6 +725,16 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .field input{width:100%;height:40px;padding:0 11px;font-size:15px;font-family:inherit;
   border:1px solid var(--separator);border-radius:9px;background:var(--bg);color:var(--label)}
 .field input:focus{outline:none;border-color:var(--accent)}
+/* 输入框内自研清空按钮（✕）：右对齐、currentColor 单色，风格与系统图标统一，
+   替代浏览器原生 type=search 的清除叉（原生样式在深浅色下不一致）。 */
+.input-wrap{position:relative}
+.input-wrap input{padding-right:36px}
+.clear-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:26px;height:26px;display:none;align-items:center;justify-content:center;
+  border:0;background:transparent;color:var(--label-3);cursor:pointer;padding:0;border-radius:6px}
+.clear-btn:hover{background:var(--fill);color:var(--label)}
+.input-wrap.has-val .clear-btn{display:inline-flex}
+.clear-btn svg{width:14px;height:14px}
 .field .err{margin-top:8px;font-size:12px;line-height:17px;color:var(--err);min-height:0}
 .hintline{font-size:11px;line-height:16px;color:var(--label-3);margin-top:6px}.err{font-size:12px;line-height:17px;color:var(--err);margin-top:8px;overflow-wrap:anywhere}
 
@@ -849,6 +859,10 @@ const SVG_HELP='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
   +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   +'<circle cx="8" cy="8" r="6.2"/><path d="M6.2 6.2a1.9 1.9 0 1 1 2.6 1.77c-.6.28-.8.65-.8 1.28"/>'
   +'<circle cx="8" cy="11.7" r=".7" fill="currentColor" stroke="none"/></svg>';
+/* 输入框清空叉（Apple HIG Icons：单色 currentColor、线宽 1.8、16px 网格） */
+const SVG_CLEAR='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" '
+  +'stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/>'
+  +'<path d="M5.8 5.8 10.2 10.2M10.2 5.8 5.8 10.2"/></svg>';
 
 /* 单位与钱的写法统一：credits_workbuddy → 积分，避免 "1265.65000006 credits_workbuddy" */
 const UNIT={credits_workbuddy:"积分",credits_wb:"积分",credits_qoder:"积分",mock_credits:"积分"};
@@ -1076,22 +1090,23 @@ function smtpDialog(cfg){
       ? `<label for="${forId}"><span class="lbl">${esc(text)}`
         + `<button type="button" class="ghelp" data-help="${esc(help)}" aria-label="说明">${SVG_HELP}</button></span></label>`
       : `<label for="${forId}">${esc(text)}</label>`;
-    const f=(id,text,val,ph,type,help,hint)=>`<div class="field">
+    const f=(id,text,val,ph,type,help)=>`<div class="field">
       ${label(id,text,help)}
-      <input id="${id}" type="${type||"text"}" value="${esc(val||"")}"
-        placeholder="${esc(ph||"")}" autocapitalize="off" spellcheck="false">
-      ${hint?`<div class="hintline">${esc(hint)}</div>`:""}
+      <div class="input-wrap${val?" has-val":""}">
+        <input id="${id}" type="${type||"text"}" value="${esc(val||"")}"
+          placeholder="${esc(ph||"")}" autocapitalize="off" spellcheck="false">
+        <button type="button" class="clear-btn" data-clear="${id}" aria-label="清空">${SVG_CLEAR}</button>
+      </div>
       </div>`;
-    const hasPass=!!cfg.password_set;
     box.classList.add("wide");
     box.innerHTML=`
       <div class="head"><h2>发件邮箱</h2></div>
       <div class="scroll-list" style="max-height:min(52vh,420px)">
         ${f("smtpHost","SMTP 主机",cfg.host,"smtp.qq.com","text","smtpHost")}
-        ${f("smtpPort","端口",cfg.port||465,"465","number","smtpPort")}
+        ${f("smtpPort","端口",cfg.port||465,"465","text","smtpPort")}
         ${f("smtpUser","发信邮箱地址",cfg.user,"you@example.com","text","smtpUser")}
         ${f("smtpFrom","发件显示地址",cfg.from,"留空同发信邮箱地址","text","smtpFrom")}
-        ${f("smtpPass","授权码","","","password","smtpPass",hasPass?"留空保留已保存的授权码":"")}
+        ${f("smtpPass","授权码","","","password","smtpPass")}
         <div class="field"><label><span class="lbl">加密方式</span></label>
           <div style="display:flex;gap:8px;align-items:center">
             <label style="display:flex;gap:6px;align-items:center;margin:0"><input id="smtpSsl" type="checkbox" ${cfg.ssl?"checked":""} style="width:auto;height:auto"> SSL / TLS</label>
@@ -1110,10 +1125,22 @@ function smtpDialog(cfg){
       smtpPort:"SMTP 端口。QQ 邮箱用 465（配合下面的 SSL / TLS）；587 则不勾 SSL，改用 STARTTLS。以邮箱服务商说明为准。",
       smtpUser:"用来发信的邮箱地址，例如 you@qq.com。",
       smtpFrom:"收件人看到的发件地址。留空则与上面的发信邮箱地址相同。",
-      smtpPass:"这里填邮箱的授权码，不是邮箱登录密码。\n\n以 QQ 邮箱为例：网页版登录 mail.qq.com → 设置 → 账号 → 开启 POP3/SMTP 服务 → 生成授权码，把得到的字符串填到这里。\n\n其他邮箱请在各自网页版的 SMTP / IMAP 设置里生成对应的应用专用密码。",
+      smtpPass:"以 QQ 邮箱为例：网页版登录 mail.qq.com → 设置 → 账号 → 开启 POP3/SMTP 服务 → 生成授权码，把得到的字符串填到这里。\n\n其他邮箱请在各自网页版的 SMTP / IMAP 设置里生成对应的应用专用密码。",
     };
     box.querySelectorAll("[data-help]").forEach(b=>b.onclick=()=>{
       infoDialog({title:"发件邮箱 · 说明",message:HELP[b.dataset.help]||""});
+    });
+    // 自研清空按钮：按输入内容显隐，点一下清空并重新聚焦。
+    box.querySelectorAll("[data-clear]").forEach(b=>b.onclick=()=>{
+      const inp=document.getElementById(b.dataset.clear);
+      if(!inp) return;
+      inp.value=""; inp.focus();
+      b.parentElement.classList.remove("has-val");
+    });
+    box.querySelectorAll(".input-wrap input").forEach(inp=>{
+      inp.addEventListener("input",()=>{
+        inp.parentElement.classList.toggle("has-val",!!inp.value);
+      });
     });
     box.querySelector('[data-act="ok"]').onclick=()=>close({
       smtp_host:document.getElementById("smtpHost").value.trim(),
@@ -2149,7 +2176,7 @@ function accountRow(x){
       <div class="sub2">凭据</div>
       <div class="kv"><span>有效期</span><b>${esc(daysLeftText((x.credential||{}).expires_at))}</b></div>
       <div class="kv"><span>文件</span><b>${esc((x.credential||{}).file||"—")}</b></div>
-      ${x.active?"":(x.inference===false?"":`<button class="btn secondary" data-switch="${esc(x.label)}" style="margin-top:10px">切换到此账号</button>`)}
+      ${x.active?"":(x.inference===false?"":`<button class="btn secondary" data-switch="${esc(x.label)}" style="margin-top:10px">锁定此账号</button>`)}
       <button class="btn secondary danger" data-remove="${esc(x.label)}" data-platform="${esc(x.platform||"workbuddy")}" style="margin-top:10px">从网关剔除此账号</button>
     </div>`;
   return `<div class="row tap${x.active?" active":""}" data-acc="${esc(x.label)}">
@@ -2195,8 +2222,8 @@ function renderAccounts(d){
     h+=`<div class="group"><div class="card" style="padding:12px 14px">
       <div class="row" style="min-height:0">
         <div class="rmain"><div class="rtitle">已锁定到 ${esc(dispLabel(locked.label))}</div>
-          <div class="rsub">请求只走这一个账号，不再自动轮转。</div></div>
-        <div class="rright"><button type="button" class="btn secondary" id="resetAccountLock">恢复自动调度</button></div>
+          <div class="rsub">后续模型请求只走这一个账号。</div></div>
+        <div class="rright"><button type="button" class="qbtn" id="resetAccountLock">恢复自动调度</button></div>
       </div></div></div>`;
   }
   if(plats.length){
@@ -2252,15 +2279,15 @@ function bindAccountActions(){
     e.stopPropagation();
     const label=btn.dataset.switch;
     const ok=await dialog({
-      title:"锁定到这个账号？",
-      message:"切换后请求只会走这一个账号，不再自动轮转；想恢复自动调度，点账号页顶部的「恢复自动」。",
+      title:"锁定这个账号？",
+      message:"锁定后所有模型请求都只走这个账号，不再自动轮转。系统会先检查这个账号能否正常使用，不可用则不会锁定。",
       rows:[["账号",label]],
       confirmText:"锁定",
     });
     if(!ok) return;
     try{
       await postJSON("account",{account:label});
-      toast("已切换到 "+label);
+      toast("已锁定到 "+dispLabel(label));
       await refreshChip();
       ACC.items=ACC.items.map(i=>({...i,active:i.label===label}));
       renderAccounts({items:ACC.items});
@@ -2270,7 +2297,7 @@ function bindAccountActions(){
         if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
           M.active=M.items.find(x=>x.active)||null; paintModels(); }
       }catch(e){}
-    }catch(err){ toast("切换失败："+err.message); }
+    }catch(err){ toast("锁定失败："+err.message); }
   }));
   // R2.39：恢复自动调度（清除账号锁 account=null）
   const resetLock=document.getElementById("resetAccountLock");

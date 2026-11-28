@@ -647,6 +647,21 @@ async def api_select_account(request: Request) -> dict:
     account = account.strip()
     if settings.upstream == "workbuddy" and account not in known_accounts():
         raise HTTPException(status_code=400, detail=f"unknown account: {account}")
+    # R2.43：锁定前实测这个账号能不能用（账单接口可读 = 最小可用信号）。
+    # 否则锁一个账单 401/失效的账号，调度池里根本没有它，锁定会被静默忽略、
+    # 请求照旧走别的号——用户看着「已锁定」，实际没生效，还以为系统有 bug。
+    if settings.upstream == "workbuddy":
+        from .app import _account_snapshot
+        # 先清缓存，避免拿 60s 前的旧结论误判刚重新授权的账号。
+        from .app import _wb_balance_cache
+        _wb_balance_cache.pop(account, None)
+        billing, _meta = _account_snapshot(account)
+        if not billing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"账号 {account} 当前读不到账单（凭据可能失效或未授权），"
+                       "不能锁定。请先在账号行点「重新授权」恢复，再锁定。",
+            )
     modelstate.set_active_account(account)
     return {"ok": True, **modelstate.state_snapshot()}
 

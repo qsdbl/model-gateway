@@ -226,23 +226,21 @@ def _live_models() -> list[dict]:
 
 
 def _high_model_items() -> list[dict]:
-    """high 档「强模型清单」——与路由页 high 区块完全同一口径。
+    """high 档模型清单——high 能调用的**所有**模型都列出，点哪个切哪个。
 
-    R2.54：模型页 high tab 以前直接显示 `_live_models()` 的全部 WorkBuddy
-    目录（连 hy4flash-free 免费模型都在里面），和 low 一模一样。用户要的是
-    「和路由页配置的一样」——只显示 routing 里 high 强模型清单**已勾选启用**
-    的那些，按 model_order 顺序，且只保留 high_enabled_platforms 选中的平台。
+    R2.56：R2.54 曾错误地把 `profiles.high.model_order`（勾选启用清单）当成
+    high tab 的显示白名单，只剩 2 个模型。其实 scheduler 里 model_order 只是
+    **排序键**（不在清单里的 rank=10000，仍作为兜底候选参与调度），不是独占
+    白名单。用户要的是「所有支持的模型都放出来，点哪个切哪个」——所以这里
+    列出双平台全部 chat 模型，只排除官方免费池（hy4flash-free 是 low 专属）。
 
-    数据源复用 `_model_view(include_qoder=True)`（与 /schedule 的 models 同源），
-    所以 Qoder 独有模型（DeepSeek-Flash / GLM-5.3-Flash）也能出现。输出字段
-    映射成模型页 modelRow 需要的格式（model_name / pricing / price_factor …）。
+    启用清单仍**保留并生效**：命中的模型标 high #N 排在最前（与路由页一致），
+    其余排在后面；写置顶（manual_model_high）就是这个全量列表里点选的 id。
     """
     cfg = router.load_config()
     profiles = cfg.get("profiles") or {}
     high_prof = profiles.get("high") or {}
     order = [str(x) for x in (high_prof.get("model_order") or [])]
-    if not order:
-        return []  # 没配 high 清单就别显示任何东西（不是退回全部目录）
     order_lc = {m.lower(): i for i, m in enumerate(order)}
     raw_hp = [str(x).lower() for x in (high_prof.get("enabled_platforms") or [])]
     hp_set = set(raw_hp) if raw_hp else {"workbuddy", "qoder"}
@@ -252,6 +250,10 @@ def _high_model_items() -> list[dict]:
     # 按小写名合并同名（WB glm-5.3-flash 与 Qoder GLM-5.3-Flash 是一行）
     merged: dict[str, dict] = {}
     for m in source:
+        if (m.get("kind") or "chat") != "chat":
+            continue
+        if m.get("is_free_pool"):
+            continue  # 官方免费池是 low 专属，high 全是强模型档
         key = str(m.get("model") or "").lower()
         if not key:
             continue
@@ -263,22 +265,21 @@ def _high_model_items() -> list[dict]:
     out: list[dict] = []
     for key, g in merged.items():
         variants = g["variants"]
-        # 只保留属于已启用平台的 variant；整行没有任何启用平台 variant → 隐藏
-        kept = [v for v in variants
-                if str(v.get("platform") or "workbuddy").lower() in hp_set]
-        if not kept:
-            continue
-        # 启用态：任一 variant 的原始 id 命中 model_order（大小写不敏感）
-        hit = [v for v in kept if str(v.get("model") or "").lower() in order_lc]
-        if not hit:
-            continue  # 未勾选的模型不进 high tab
-        rank = min(order_lc[str(v["model"]).lower()] for v in hit)
-        # 代表 variant 用命中的那个（写置顶/展示 ID 用当前启用平台侧的 id）
-        rep = hit[0]
+        # 代表 variant：优先取启用平台里命中 high 清单的；否则取启用平台的；
+        # 都没有就取第一个（行仍展示，只是代表 id 用首个）。
+        def _rep_priority(v):
+            plat_ok = str(v.get("platform") or "workbuddy").lower() in hp_set
+            in_order = str(v.get("model") or "").lower() in order_lc
+            return (0 if (plat_ok and in_order) else 1 if plat_ok else 2,
+                    order_lc.get(str(v.get("model") or "").lower(), 10_000))
+        rep = sorted(variants, key=_rep_priority)[0]
         mid = rep.get("model") or ""
         factor = rep.get("factor")
         is_free = bool(rep.get("is_free_pool"))
         pricing = "free" if is_free else ("unknown" if factor is None else "fixed")
+        # 启用态：任一 variant 命中 high.model_order（大小写不敏感）
+        hit = [v for v in variants if str(v.get("model") or "").lower() in order_lc]
+        rank = min((order_lc[str(v["model"]).lower()] for v in hit), default=10_000)
         out.append({
             "platform": rep.get("platform") or "workbuddy",
             "model_name": mid,
@@ -305,7 +306,8 @@ def _high_model_items() -> list[dict]:
             "active": False,
             "_rank": rank,
         })
-    out.sort(key=lambda x: (x["_rank"], x["model_name"]))
+    # 启用的排前（按配置序），其余按名字
+    out.sort(key=lambda x: (x["_rank"], x["model_name"].lower()))
     for it in out:
         it.pop("_rank", None)
     return out

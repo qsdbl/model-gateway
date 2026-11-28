@@ -226,13 +226,14 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
   white-space:nowrap}
 .qbtn:active{opacity:.7}
 .qbtn.pri{background:var(--accent);color:#fff;border-color:transparent}
-/* R2.38：凭据续期失败/过期的红色「重新授权」按钮 + 行内告警文字。
+/* R2.39：凭据续期失败/过期的红色「重新授权」按钮 + 行内告警文字。
    依据 Apple HIG 语义色：告警用系统红，正文对比度 ≥4.5:1（深色模式用亮红）。 */
 .qbtn.danger{background:var(--err);color:#fff;border-color:transparent}
-/* 账号展开区「从网关剔除」按钮——红色描边（区别于填充的重新授权）。 */
+/* R2.41：账号展开区「从网关剔除」按钮——红色描边（区别于填充的重新授权）。 */
 .btn.danger{color:var(--err);border-color:var(--err)}
 .btn.danger:hover{background:var(--err);color:#fff}
 .reauth-hint{color:var(--err);font-weight:600;margin-right:6px}
+.qbtn[disabled]{opacity:.45;cursor:default}
 
 /* 指引 / 代码块 */
 .step{display:flex;gap:12px;padding:14px}
@@ -848,7 +849,6 @@ const SVG_PAUSE='<svg viewBox="0 0 16 16" width="14" height="14" fill="none" '
   +'<path d="M5.5 3.5v9M10.5 3.5v9"/></svg>';
 const SVG_PLAY='<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">'
   +'<path d="M4.5 3.2a.7.7 0 0 1 1.06-.6l7 4.8a.7.7 0 0 1 0 1.2l-7 4.8a.7.7 0 0 1-1.06-.6z"/></svg>';
-
 /* 日期控件左右箭头（Apple HIG Icons：单色 currentColor、统一线宽） */
 const SVG_CHEVRON_L='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
   +'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -924,7 +924,7 @@ async function copyText(text){
 /* ---------- 扫码登录分享卡片（手机长按保存图片） ----------
    用户原话：把扫码登录做成手机上可长按保存的图片。
    做法：内联 SVG 二维码 → Image → Canvas 绘卡片 → toDataURL(png)。
-   白底二维码卡片：标题/副标题/提示，
+   参考同类「分享卡片」实现（白底二维码 + 标题/副标题/提示），
    pixelRatio=2 高清输出。移动端长按图片即可保存/识别。 */
 const QRCARD_TEXT={
   workbuddy:{brand:"WorkBuddy",title:"扫码登录 WorkBuddy",
@@ -1398,7 +1398,9 @@ function freeBarHTML(f){
   }
   const reset=last.reset_pending?" · 上次 429 将于 "+hhmm(last.reset_at)+" 重置":"";
   // 真免费模型（目录 pricing=free，无论多长都扣 0）
-  const models=(h.free_models||[]).join("、")||"无";
+  // R2.45：池子为空（0/0）时不再显示「模型：无」——「无」不是信息，
+  // 只会让人以为网关把模型列表弄丢了；没模型就整行不画。
+  const models=(h.free_models||[]).join("、");
   // 短请求免扣：付费模型，仅输入极短时恰好不扣钱 —— 单独一栏，不算免费池
   const lim=h.short_free_limits||{};
   const shortParts=(h.short_free_models||[]).map(m=>
@@ -1407,7 +1409,7 @@ function freeBarHTML(f){
     <div class="fbhead"><b>免费池</b><span class="fbnum">${free}/${cap} 可用</span></div>
     <div class="fbtrack"><i style="width:${pct}%"></i></div>
     ${(timeText||reset)?`<div class="fbsub">${esc(timeText)}${esc(reset)}</div>`:""}
-    <div class="fbsub">模型：${esc(models)}</div>
+    ${models?`<div class="fbsub">模型：${esc(models)}</div>`:""}
     ${shortParts?`<div class="fbsub fbshort">短请求免扣：${esc(shortParts)}</div>`:""}
   </div></div>`;
 }
@@ -1466,17 +1468,17 @@ function paintModels(){
       else if(it.price_factor!=null) price=num(it.price_factor)+"x";
       else price=null;
       const pill=price?`<span class="pill ${inPool?"free":"info"}">${esc(price)}</span>`:"";
+      /* R2.45：用户要「每个模型最新的调用时间」，不要「切换轨迹 旧→新」那行。
+         轨迹是给流向图看的，这里一行 8 个模型挤成一条箭头链，读不出「现在」。
+         last_at 由 requests 表算，模型 tab 本身已经 5 秒刷一次，时间会跟着跳。 */
+      const at=it.last_at?` · 最近 ${hhmmss(it.last_at)}`:"";
       return `<div class="row"><div class="rmain">
         <div class="rtitle">${platBadge(it.platform)} ${esc(it.model_name)} ${pill}</div>
-        <div class="rsub">账号 ${esc(dispLabel(it.account_label))} · ${label(it.count)}</div>
+        <div class="rsub">账号 ${esc(dispLabel(it.account_label))} · ${label(it.count)}${at}</div>
       </div></div>`;
     }).join("");
-    // 切换段：说明「在谁之间调度切换」
-    const segs=(rs.segments||[]).slice(-6).reverse();
-    const segHtml=segs.length?`<div class="rsub" style="margin-top:6px;color:var(--label-3)">切换轨迹（旧→新）：${segs.map(s=>
-      `${platBadge(s.platform)} ${esc(dispLabel(s.account_label))}/${esc(s.model_name)}`).join(" → ")}</div>`:"";
     h+=`<div class="group"><div class="ghead">最近 ${win} 分钟 · 实际调度</div><div class="card">
-      ${rowsHtml}${segHtml}
+      ${rowsHtml}
     </div></div>`;
   } else if(M.blocked){
     /* R2.44：调度器一个候选都给不出来。以前这里会画「当前选中 · Hy4 flash 免费」，
@@ -1558,7 +1560,10 @@ async function switchModel(x){
     await postJSON("model",{model:x.model_name});
     toast("已切换到 "+(x.display_name||x.model_name));
     await refreshChip();
-    renderModels(M.items.map(i=>({...i,active:i.model_name===x.model_name})));
+    // R2.45：切模型后重绘要带上上一次的账号/最近调度/不可用原因，
+    // 否则 renderModels 的 blocked 参数被写成 null，顶部「没有可用账号」卡片会消失。
+    renderModels(M.items.map(i=>({...i,active:i.model_name===x.model_name})),
+      M.activeAcc, M.recentSchedule, M.blocked);
   }catch(e){ toast("切换失败："+e.message); }
 }
 
@@ -1614,6 +1619,7 @@ const pad2=n=>String(n).padStart(2,"0");
 const todayKey=()=>{const d=new Date();
   return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());};
 const hhmm=ts=>{const d=new Date(ts*1000);return pad2(d.getHours())+":"+pad2(d.getMinutes());};
+const hhmmss=ts=>hhmm(ts)+":"+pad2(new Date(ts*1000).getSeconds());
 
 function todayNote(bt){
   if(!bt||bt.delta==null) return (bt&&bt.note)||"今天还没有读到账单";
@@ -2157,9 +2163,10 @@ function accountRow(x){
       ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
       : (x.balance!=null ? "余额已读取" : "余额暂不可用"));
   if(routeNote) sub = sub ? `${sub} · ${routeNote}` : routeNote;
-  // 续期失败 / 凭据过期 / 读不到账单（余额未知）→ 红色「重新授权」。
-  // 数据由后端 /accounts 给出：renew.needs_reauth 是续期告警口径；
-  // balance==null 说明 token 读不到账单（可能已失效），同样要能一键重新扫码。
+  // R2.42：红色「重新授权」只认后端 renew.needs_reauth（续期失败/凭据已过期）。
+  // 不能再用 balance==null 推断「需重新授权」——账单接口 401 与签到接口鉴权口径不同，
+  // 实测有账号账单读不到但签到照样领 100 积分（token 有效），标红是误报。
+  // 账单读不到只显示中性「余额暂不可用」，不弹告警按钮。
   // R2.44：但「上游明确回 401」是另一回事——实测这种 token 连聊天接口一起 401，
   // 只能重新扫码。后端把 401 单独走 auth_error / auth_status="expired" 传上来，
   // 这里据此显示红色「重新授权」；429/超时/5xx 仍然只算「余额暂不可用」。
@@ -2261,7 +2268,8 @@ function renderAccounts(d){
     return bv-av;
   });
   let h="";
-  // R2.39：账号被手动锁定（点过「切换到此账号」）时，给一个显眼的恢复入口。
+  // R2.39：账号被手动锁定（点过「锁定此账号」）时，给一个显眼的恢复入口。
+  // 以前只有锁定没有解锁入口，用户切完就回不到自动调度了。
   const locked=ACC.items.find(x=>x.active);
   if(locked){
     h+=`<div class="group"><div class="card" style="padding:12px 14px">
@@ -2290,7 +2298,7 @@ function renderAccounts(d){
   h+='<div class="group"><div class="ghead">用量汇总</div>'
     +`<div class="card uh-summary-card"><div id="uh-${sid("__all__")}"><div class="uload">加载中…</div></div></div></div>`;
   h+='<div class="group"><div class="ghead">账号</div>';
-  h+='<div class="card">'+ACC.items.map(accountRow).join("")+'</div>';
+  h+='<div class="card">'+ACC.items.map(accountRow).join("")+'</div></div>';
   h+=addAccountCard();
   h+='<div class="note">今日消耗含官方客户端；24 小时仅本网关；余额不跨平台相加。</div>';
   body.innerHTML=h;
@@ -2326,7 +2334,7 @@ function bindAccountActions(){
     const ok=await dialog({
       title:"锁定这个账号？",
       message:"锁定后所有模型请求都只走这个账号，不再自动轮转。系统会先检查这个账号能否正常使用，不可用则不会锁定。",
-      rows:[["账号",label]],
+      rows:[["账号",dispLabel(label)]],
       confirmText:"锁定",
     });
     if(!ok) return;
@@ -2334,42 +2342,40 @@ function bindAccountActions(){
       await postJSON("account",{account:label});
       toast("已锁定到 "+dispLabel(label));
       await refreshChip();
-      ACC.items=ACC.items.map(i=>({...i,active:i.label===label}));
-      renderAccounts({items:ACC.items});
-      // 让模型 tab 预览区立刻反映锁定账号，不等 5 秒自动刷新
+      // R2.39：账号锁会影响「当前选中预览」，切完立即重拉 models 数据，
+      // 让用户去模型 tab 时能看到切换后的账号，不用等 5 秒自动刷新。
       try{
         const md=await getJSON("models");
         if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
-          M.active=M.items.find(x=>x.active)||null; paintModels(); }
-      }catch(e){}
+          M.active=M.items.find(x=>x.active)||null; }
+      }catch{}
+      ACC.items=ACC.items.map(i=>({...i,active:i.label===label}));
+      renderAccounts({items:ACC.items});
     }catch(err){ toast("锁定失败："+err.message); }
   }));
-  // R2.39：恢复自动调度（清除账号锁 account=null）
+  const add=document.getElementById("addacc");
+  if(add) add.addEventListener("click",()=>importDialog());
+  /* R2.39：恢复自动调度（清除账号锁 account=null） */
   const resetLock=document.getElementById("resetAccountLock");
-  if(resetLock) resetLock.addEventListener("click",async e=>{
-    e.stopPropagation();
+  if(resetLock) resetLock.addEventListener("click",async()=>{
+    resetLock.disabled=true;
     try{
       await postJSON("account",{account:null});
       toast("已恢复自动调度");
       await refreshChip();
-      try{
-        const md=await getJSON("models");
-        if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
-          M.active=M.items.find(x=>x.active)||null; paintModels(); }
-      }catch(e){}
-      ACC.items=ACC.items.map(i=>({...i,active:false}));
-      renderAccounts({items:ACC.items});
-    }catch(err){ toast("恢复失败："+err.message); }
+      const md=await getJSON("models");
+      if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
+        M.active=M.items.find(x=>x.active)||null; }
+      await load("accounts");
+    }catch(err){ toast("恢复失败："+err.message); resetLock.disabled=false; }
   });
-  const add=document.getElementById("addacc");
-  if(add) add.addEventListener("click",()=>importDialog());
   /* ---- Qoder 授权（P44）----
      行内「授权」= 起一次设备码登录（弹二维码）；「检查」= 只查状态 + 刷余额。 */
   document.querySelectorAll("[data-qauth]").forEach(btn=>btn.addEventListener("click",e=>{
     e.stopPropagation();
     qoderAuthDialog(btn.dataset.qauth);
   }));
-  /* R2.38：凭据续期失败/过期的红色「重新授权」按钮。
+  /* R2.39：凭据续期失败/过期的红色「重新授权」按钮。
      WorkBuddy → 复用扫码弹窗重新登录（同 uid 覆盖凭据 + 清告警）；
      Qoder → 复用设备码 reauth 流程（核对 uid 一致 + 覆盖凭据）。 */
   document.querySelectorAll("[data-reauth]").forEach(btn=>btn.addEventListener("click",async e=>{
@@ -2386,20 +2392,6 @@ function bindAccountActions(){
     if(!ok) return;
     if(plat==="qoder") qoderAuthDialog(label);
     else importDialog({reauth:true});
-  }));
-  /* 从网关彻底剔除账号（删凭据文件 + 登记 + 告警），不可撤销，二次确认。 */
-  document.querySelectorAll("[data-remove]").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation();
-    const label=btn.dataset.remove, plat=btn.dataset.platform||"workbuddy";
-    const ok=await dialog({title:"从网关剔除账号？",danger:true,confirmText:"确认剔除",
-      rows:[["账号",dispLabel(label)],["说明","删除凭据文件与登记，该账号立即停用且不可恢复"]]});
-    if(!ok) return;
-    const old=btn.textContent; btn.disabled=true; btn.textContent="剔除中…";
-    try{
-      const r=await postJSON("accounts/remove",{label,platform:plat});
-      toast("已剔除 "+dispLabel(label)+(r.removed_files&&r.removed_files.length?("（"+r.removed_files.join("、")+"）"):""));
-      await load("accounts");
-    }catch(err){ toast("剔除失败："+err.message); btn.disabled=false; btn.textContent=old; }
   }));
   document.querySelectorAll("[data-qcheck]").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation();
@@ -2418,6 +2410,20 @@ function bindAccountActions(){
       btn.disabled=false; btn.textContent=old;
     }
   }));
+  /* R2.41：从网关彻底剔除账号（删凭据文件 + 登记 + 告警），不可撤销，二次确认。 */
+  document.querySelectorAll("[data-remove]").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const label=btn.dataset.remove, plat=btn.dataset.platform||"workbuddy";
+    const ok=await dialog({title:"从网关剔除账号？",danger:true,confirmText:"确认剔除",
+      rows:[["账号",dispLabel(label)],["说明","删除凭据文件与登记，该账号立即停用且不可恢复"]]});
+    if(!ok) return;
+    const old=btn.textContent; btn.disabled=true; btn.textContent="剔除中…";
+    try{
+      const r=await postJSON("accounts/remove",{label,platform:plat});
+      toast("已剔除 "+dispLabel(label)+(r.removed_files&&r.removed_files.length?("（"+r.removed_files.join("、")+"）"):""));
+      await load("accounts");
+    }catch(err){ toast("剔除失败："+err.message); btn.disabled=false; btn.textContent=old; }
+  }));
 }
 
 /* 添加账号弹窗：默认「扫码登录」，第二个 tab 才是粘贴 .info。
@@ -2426,7 +2432,7 @@ function bindAccountActions(){
 function importDialog(opts){
   const ov=document.getElementById("overlay");
   const box=document.getElementById("alert");
-  // R2.38：账号行「重新授权」入口复用本弹窗——重新扫同一个号即可刷新登录态。
+  // R2.39：账号行「重新授权」入口复用本弹窗——重新扫同一个号即可刷新登录态。
   const reauth=!!(opts&&opts.reauth);
   box.classList.add("wide");
   box.innerHTML=`
@@ -2673,10 +2679,13 @@ function importDialog(opts){
         await kill();
         stopped=true;
         ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
-        // R2.38：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
+        // R2.39：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
         const acc=r.account||{};
-        // 账号名一律过 dispLabel：底层 label 是内部标签，展示用掩码。
+        // 账号名一律过 dispLabel：底层 label（如「主号」）是内部标签，
+        // 展示必须是手机号掩码，别把「主号」露出去。
         const shown=dispLabel(acc.label||"账号");
+        // R2.41：导入后端会实测 token。没通过就别再说「已更新登录状态」——
+        // 那会让用户以为修好了（假阳性），实际 token 还是旧的。
         if(r.verified===false){
           toast(`扫码完成，但凭据未通过验证：${shown}。请确认扫的是该账号本人，必要时用官方 CLI 重新登录。`);
         }else{
@@ -2746,7 +2755,8 @@ function importDialog(opts){
       const r=await postJSON("accounts/import",{content});
       stopped=true; clearInterval(timer);
       ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
-      // 区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
+      // R2.39：区分「覆盖已有账号」与「新增」，避免用户误以为加了重复账号。
+      // R2.41：后端实测 token 没通过就明确提示，别报「已更新登录状态」的假阳性。
       const acc=r.account||{};
       const shown=dispLabel(acc.label||"账号");
       if(r.verified===false){
@@ -3004,7 +3014,7 @@ function bindSecurity(){
       toast(r.ok ? ("已发到 "+r.to+"，去收件箱看看") : ("没发出去："+r.message));
     }catch(e){ toast("发信失败："+e.message); }
   };
-  /* 手动触发一轮签到+日报（走网关定时任务同一套 daily_report.run） */
+  /* R2.41：手动触发一轮签到+日报（走网关定时任务同一套 daily_report.run） */
   const sr=document.getElementById("signinRun");
   if(sr) sr.onclick=async ()=>{
     const ok=await dialog({title:"跑一轮签到并发日报？",
@@ -3277,7 +3287,7 @@ function swDrawRecent(){
   const el=document.getElementById("swRecentList"); if(!el) return;
   const segs=SW.segs||[];
   if(!segs.length){ patchDOM(el,'<div class="empty" style="padding:14px">还没有调用记录</div>'); return; }
-  // R2.19：按「平台 · 账号 · 模型」聚合——用户要看到「WB <账号名> hy4flash-free」，
+  // R2.19：按「平台 · 账号 · 模型」聚合——用户要看到「WB 明月 hy4flash-free」，
   // 之前按「平台·模型」合并把账号抹掉了。账号用 dispLabel 掩码，和账号页一致。
   const agg=new Map();
   for(const s of segs){
@@ -3522,13 +3532,13 @@ function swDrawTime(){
   c.setOption({
     backgroundColor:"transparent",
     /* R2.29：左侧空白根因——grid.left=142 但两行标签实际只需 ~70px，右对齐后
-       左边空出一大截。实测文本宽（长昵称≈65px、hy4flash-free=70px），
+       左边空出一大截。实测文本宽（WB 可叹飘零=65px、hy4flash-free=70px），
        axisLabel.width 收到 76/84 刚好容纳，grid.left=width+间距 → 绘图区左移变宽。 */
     grid:{left:compact?86:96,right:compact?12:16,top:18,bottom:28},
     xAxis:{type:"value",min:0,max:axisMax,interval:axisStep,
       axisLabel:{color:th.sub,formatter:v=>Math.round(v/60)+"m"},
       splitLine:{lineStyle:{color:th.grid}},axisLine:{lineStyle:{color:th.grid}}},
-    /* R2.27：Y轴标签原来是「WB <长昵称> · hy4flash-free」单行被 truncate 成
+    /* R2.27：Y轴标签原来是「WB 可叹飘零 · hy4flash-free」单行被 truncate 成
        「WB 可叹飘 · hy4f...」。改为 formatter 分两行（账号/模型各一行），
        每行都短、完整可读。依据 ECharts option.html#xAxis.axisLabel（formatter/width/overflow）。
        R2.29：width 从 100/132 收紧到 76/84（实测两行各 ≤70px），overflow 由 breakAll
@@ -3596,6 +3606,8 @@ let SCH_TOKENS=200;
 
 function schTgl(label,on,cls){ return `<button class="tgl ${cls||""}" data-sch="${label}" aria-pressed="${on?"true":"false"}">${on?"开启":"关闭"}</button>`; }
 
+/* P41：上游按「请求输入 token」计费，免费只是一段长度区间。
+   所以这里显示的是「跑这个长度的请求要花多少」，不是「这个模型免费吗」。 */
 function schMeta(m){
   const bits=[];
   // R2.39b：免费就免费，不免费写清楚倍率（与用户拍板的口径一致，不再啰嗦）
@@ -3620,7 +3632,7 @@ function renderSchedule(d){
   // R1 Q3：笼统别名（auto/default/快速…）不进候选池，页面也不展示。
   // 用户要的是「只留真正的模型名」，所以这里连模型列表都过滤掉。
   const visModels=models.filter(m=>!hidden.has(String(m.model||"").toLowerCase())&&!hidden.has(String(m.model_name||"").toLowerCase()));
-  // R2.38：同一模型在两个平台各有一条（如 WB 的 glm-5.3-flash 与 Qoder 的
+  // R2.39：同一模型在两个平台各有一条（如 WB 的 glm-5.3-flash 与 Qoder 的
   // GLM-5.3-Flash，显示名相同、id 仅大小写不同），列表里不该列两遍。
   // 按小写 model 名合并成一行，平台角标并列展示；variants 保留各平台原始 id，
   // 供启用/停用/排序时写回配置（配置里仍是原始 model id 数组）。
@@ -3798,7 +3810,7 @@ function renderSchedule(d){
     lowManual?`<button type="button" class="orderexpand" id="resetLowOrder">恢复自动排序</button>`:""}</div></div>`;
 
   /* --- high 强模型清单（R1 Q3）：勾选 + 排序，账号耗尽自动切下一账号/下一模型 ---
-     R2.38：同模型跨平台合并成一行 + 平台角标；未勾选平台的专属模型隐藏；
+     R2.39：同模型跨平台合并成一行 + 平台角标；未勾选平台的专属模型隐藏；
      底部两行说明收进标题后的问号弹窗。 */
   h+=`<div class="group"><div class="ghead">high 强模型清单 · 勾选启用 · 按优先级排序
       <button type="button" class="ghelp" id="highHelp" title="说明" aria-label="说明">${SVG_HELP}</button></div>
@@ -4029,7 +4041,7 @@ function bindSchedule(){
       const effective=next.length?next:HP_PLATS;
       document.querySelectorAll("#highPlats [data-hplat]").forEach(b=>
         b.setAttribute("aria-pressed",effective.includes(b.dataset.hplat)?"true":"false"));
-      // R2.38 联动：隐藏「只有未启用平台」的合并行，淡化未启用平台角标。
+      // R2.39 联动：隐藏「只有未启用平台」的合并行，淡化未启用平台角标。
       // 每行 data-plats 存该模型出现的所有平台（逗号分隔）。
       document.querySelectorAll("#highlist .orderrow").forEach(row=>{
         const plats=(row.dataset.plats||"").split(",").filter(Boolean);

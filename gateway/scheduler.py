@@ -250,31 +250,67 @@ def _is_free_pool_by_name(model_name: str | None) -> bool:
     return is_official_free(model_name)
 
 
-def _summarize_rejected(rejected: list[dict[str, str]]) -> str:
-    """R2.44：把剔除原因压成一行「账号 原因；账号 原因」。
+# 「能力不符」类原因：跟账号状态无关，换个账号也一样被剔除。
+# 旧实现按候选池顺序取前 3 条账号，平台顺序靠前的账号级 401 会把这类原因挤没，
+# 于是 503 只报「某某账号凭据失效」，用户去重新授权，回来照样失败。
+_CAPABILITY_REASONS = (
+    "不支持工具调用", "不支持图片输入", "上下文", "已在 hidden_models", "模型已被禁用",
+)
 
-    账号级（model="*"）优先——它们才是「整个号不能用」的根因；
-    模型级的（能力不符/被禁用）只在没有账号级原因时才拿出来。
-    同一账号多模型只留第一条，最多 3 条。
+_PLATFORM_NAMES = {"workbuddy": "WorkBuddy", "qoder": "Qoder", "mock": "本地模拟"}
+
+# 这类剔除是我们**故意**做的（auto/快速/均衡这些笼统别名本来就不进候选池），
+# 不是「没有候选」的原因，写进 503 只会让人以为出事了。
+_SILENT_REASONS = ("已在 hidden_models",)
+
+
+def _plain_account(acc: str) -> str:
+    """label → 用户可读名；跨平台可能同名，带平台前缀区分。"""
+    from .display import display_label
+
+    if ":" in acc:
+        plat, _, bare = acc.partition(":")
+        return f"{_PLATFORM_NAMES.get(plat, plat)} {display_label(bare)}"
+    return display_label(acc)
+
+
+def _summarize_rejected(rejected: list[dict[str, str]]) -> str:
+    """把剔除原因压成「能力不符 + 账号状态」两段人话。
+
+    - **能力类**（tools/image/context/禁用）按「平台 + 原因」聚合计数，
+      排在最前面——它解释「为什么这次请求一个候选都没有」；
+    - **账号状态类**（401/积分用完/冷却/未授权）按账号聚合，同原因的账号
+      并成一行，最多 2 组，避免同一句话重复多遍。
     """
-    account_level: list[str] = []
-    model_level: list[str] = []
-    seen: set[str] = set()
+    account_reasons: dict[str, str] = {}       # 账号 → 原因（同账号只留一条）
+    capability: dict[tuple[str, str], int] = {}  # (平台, 原因) → 候选数
     for r in rejected or []:
-        acc = str(r.get("account") or "?")
-        if acc in seen:
-            continue
+        acc = str(r.get("account") or "?").strip()
         reason = str(r.get("reason") or "").strip()
-        if not reason:
+        if not reason or any(k in reason for k in _SILENT_REASONS):
             continue
-        seen.add(acc)
-        text = f"{acc} {reason}"
-        if r.get("model") == "*":
-            account_level.append(text)
-        else:
-            model_level.append(text)
-    picked = (account_level or model_level)[:3]
-    return "；".join(picked)
+        if any(k in reason for k in _CAPABILITY_REASONS):
+            plat = acc.split(":", 1)[0] if ":" in acc else "workbuddy"
+            capability[(plat, reason)] = capability.get((plat, reason), 0) + 1
+            continue
+        # 账号级（model="*"）优先于模型级：前者才是「整个号不能用」的根因
+        if acc in account_reasons and r.get("model") != "*":
+            continue
+        account_reasons[acc] = reason
+
+    parts: list[str] = []
+    for (plat, reason), n in sorted(capability.items(), key=lambda kv: -kv[1])[:2]:
+        name = _PLATFORM_NAMES.get(plat, plat)
+        parts.append(f"{name} {n} 个候选{reason}")
+
+    by_reason: dict[str, list[str]] = {}
+    for acc, reason in account_reasons.items():
+        by_reason.setdefault(reason, []).append(acc)
+    for reason, accs in sorted(by_reason.items(), key=lambda kv: -len(kv[1]))[:2]:
+        shown = [_plain_account(a) for a in accs[:4]]
+        who = "、".join(shown) + (f" 等 {len(accs)} 个" if len(accs) > 4 else "")
+        parts.append(f"{who} {reason}")
+    return "；".join(parts)
 
 
 def _locked_unavailable_reason(locked_acc: str, rejected: list[dict[str, str]]) -> str:
@@ -456,6 +492,12 @@ def build_plan(
                                 "reason": "已锁定其他账号",
                             })
                     pool = kept_acc
+                    notes.append("手动账号：" + locked_acc)
+                else:
+                    # R2.43：锁定账号不在候选池里（账单读不到/被停用）→ 直接不服务，
+                    # 不再静默回退到别的账号。用户既然锁定了，就只走这一个；
+                    # 它不可用就该明确失败并提示重新授权，而不是「页面显示已锁定、
+                    # 日志却走别的号」的假象（这正是用户报告的 bug）。
                     #
                     # R2.44：原因必须说准。以前一律说「读不到账单/已停用，请重新授权」，
                     # 实际最常见的是「积分用完（余额 0）」和「免费模型 429 冷却中」——
@@ -467,9 +509,6 @@ def build_plan(
                         tail = "请到账号页启用它，或点「恢复自动调度」用其他账号。"
                     else:
                         tail = "点「恢复自动调度」可改用其他账号；积分/免费额度恢复后自动可用。"
-                    notes.append("手动账号：" + locked_acc)
-                else:
-                    # R2.43：锁定账号不在候选池 → 直接不服务，不静默回退到别的账号。
                     for c in pool:
                         rejected.append({
                             "account": c.account_label, "model": c.model_name,

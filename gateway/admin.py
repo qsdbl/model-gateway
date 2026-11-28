@@ -850,12 +850,25 @@ def _recent_schedule_view(recent: dict) -> dict:
             _put("qoder", r.get("model_name"), r.get("credits_factor"))
     except Exception:
         pass
+    # R2.49：当前冷却中的 (账号, 模型) → 到期时刻 + 原因。前端据此给
+    # 「最近 N 分钟实际调度」里不可用账号的 chip 标红并写明原因，
+    # 与仍可用的账号一眼区分（用户诉求：191 触发 429 后要标红）。
+    cooldowns: dict[tuple[str | None, str | None], dict] = {}
+    try:
+        import time as _time
+        for cd in store.list_cooldowns(now=_time.time()):
+            cooldowns[(cd.get("account_label"), cd.get("model_name"))] = cd
+    except Exception:
+        pass
     for it in recent.get("items") or []:
         mid = it.get("model_name")
         it["is_free_pool"] = bool(is_official_free(mid))
         if it.get("price_factor") is None:
             it["price_factor"] = catalog.get(
                 (it.get("platform") or "workbuddy", mid))
+        cd = cooldowns.get((it.get("account_label"), mid))
+        it["cooldown_until"] = float(cd["until_at"]) if cd and cd.get("until_at") else None
+        it["unavailable_reason"] = (cd.get("reason") or "")[:120] if cd else ""
     return recent
 
 
@@ -881,7 +894,8 @@ async def api_models(request: Request) -> dict:
         return {"items": items,
                 "active_account": _active_upstream_account(),
                 "blocked": blocked,
-                "recent_schedule": recent}
+                "recent_schedule": recent,
+                "manual_model": _current_manual_model()}
     import time
     # P48：这里原来用 effective_model()（P15 手动锁/默认值），和接入页的
     # _active_upstream_model()（问调度器实际会选谁）口径不同 —— 同一个"当前模型"
@@ -932,7 +946,16 @@ async def api_models(request: Request) -> dict:
         recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
     return {"items": items, "active_account": _active_upstream_account(),
             "blocked": _preview_blocked(),
-            "recent_schedule": recent}
+            "recent_schedule": recent,
+            "manual_model": _current_manual_model()}
+
+
+def _current_manual_model() -> str | None:
+    """R2.49：当前置顶的模型（routes.json::manual_model），前端据此显示恢复按钮。"""
+    try:
+        return router.load_config().get("manual_model") or None
+    except Exception:
+        return None
 
 
 @admin.get("/free-forecast")

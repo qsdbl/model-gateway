@@ -198,6 +198,10 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .sched-acct{font-size:11px;line-height:15px;color:var(--label-2);white-space:nowrap}
 .sched-acct b{color:var(--label-1);font-weight:600}
 .sched-acct i{font-style:normal;color:var(--label-3)}
+/* R2.49：账号当前冷却/429 → chip 标红 + 原因，和仍可用的账号一眼区分 */
+.sched-acct.off,.sched-acct.off b{color:var(--err)}
+.sched-acct.off i{color:var(--err);opacity:.8}
+.sched-acct.off .sched-why{margin-left:3px}
 .dotst{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
 .dotst.ok{background:var(--ok)} .dotst.err{background:var(--err)} .dotst.warn{background:var(--warn)}
 
@@ -1295,7 +1299,7 @@ async function load(p){
   let d;
   try{ d=await getJSON(p==="routes"?("schedule?tokens="+SCH_TOKENS):p); }
   catch(e){ if(e.auth) return; body.innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>'; return; }
-  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null, d.blocked||null);
+  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null, d.blocked||null, d.manual_model||null);
   else if(p==="accounts") renderAccounts(d);
   else if(p==="requests"){
     // P48：切换历史单独取（折叠后的段），失败不影响请求列表本身
@@ -1342,9 +1346,11 @@ function defaultOpen(scope){
   return ["free","low"];
 }
 
-function renderModels(items,activeAcc,recentSchedule,blocked){
+function renderModels(items,activeAcc,recentSchedule,blocked,manualModel){
   const body=document.getElementById("body");
   M.items=items||[];
+  // R2.49：当前置顶模型（来自 routes.json::manual_model），控制「恢复自动调度」按钮
+  M.manualModel=manualModel||null;
   /* 账号信息要跨函数用：卡片是在 paintModels() 里画的，不是 renderModels。
      之前把它当参数往下传，paintModels 拿不到 → ReferenceError → 整张卡片
      连同整个模型列表都不渲染。放进全局状态才安全。 */
@@ -1368,8 +1374,26 @@ function renderModels(items,activeAcc,recentSchedule,blocked){
       <button class="fchip" data-s="all" aria-pressed="${M.scope==="all"}">全部</button>
       <button class="fchip" data-s="free" aria-pressed="${M.scope==="free"}">免费</button>
       <button class="fchip" data-s="image" aria-pressed="${M.scope==="image"}">支持图片</button>
+      ${M.manualModel?`<button class="fchip" id="resetModelPin" title="清除置顶，low/high 都恢复自动调度">↺ 恢复自动调度</button>`:""}
     </div>
     <div id="mlist"></div>`;
+  const resetBtn=document.getElementById("resetModelPin");
+  if(resetBtn) resetBtn.onclick=async()=>{
+    try{
+      await postJSON("schedule",{manual_model:null});
+      toast("已恢复自动调度（low/high）");
+      M.manualModel=null;
+      resetBtn.remove();   // 恢复后按钮立即消失，不必整页重绘
+      await refreshChip();
+      const d=await getJSON("models");
+      if(d){
+        M.items=d.items||[]; M.activeAcc=d.active_account||null;
+        M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
+        M.active=M.items.find(i=>i.active)||null;
+        paintModels();
+      }
+    }catch(e){ toast("恢复失败："+e.message); }
+  };
   document.getElementById("mq").addEventListener("input",e=>{ M.q=e.target.value.trim().toLowerCase(); paintModels(); });
   document.getElementById("filters").addEventListener("click",e=>{
     const b=e.target.closest("[data-s]"); if(!b) return;
@@ -1493,7 +1517,17 @@ function paintModels(){
       const tick=(activeModel&&g.model===activeModel)?'<span class="tick" title="当前调度选中的模型">✓</span>':"";
       const accts=g.accts.slice().sort((a,b)=>(b.last_at||0)-(a.last_at||0)).map(a=>{
         const at=a.last_at?` · ${hhmmss(a.last_at)}`:"";
-        return `<span class="sched-acct"><b>${esc(dispLabel(a.account_label))}</b><i> · ${label(a.count)}${at}</i></span>`;
+        // R2.49：当前冷却/429 的账号标红并写明原因，与仍可用账号区分。
+        // 后端在 cooldown_until>now 时给出该字段；文案取「冷却到 HH:MM」+ 简短原因。
+        const off=a.cooldown_until&&a.cooldown_until>Date.now()/1000;
+        let why="";
+        if(off){
+          const t=new Date(a.cooldown_until*1000);
+          const hm=String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");
+          const r=(a.unavailable_reason||"").includes("6004")?" · 429 额度用完":" · 冷却中";
+          why=`<i class="sched-why" title="${esc(a.unavailable_reason||"")}">${r}到 ${hm}</i>`;
+        }
+        return `<span class="sched-acct${off?" off":""}"${off?' title="当前不可用：'+esc(a.unavailable_reason||"冷却中")+'"':""}><b>${esc(dispLabel(a.account_label))}</b><i> · ${label(a.count)}${at}</i>${why}</span>`;
       }).join("");
       const many=g.accts.length>1?`<span class="pill plain">${g.accts.length} 账号</span>`:"";
       return `<div class="row${tick?" active":""}"><div class="rmain">
@@ -1566,9 +1600,15 @@ function paintModels(){
     const x=M.items.find(i=>i.model_name===el.dataset.model);
     if(!x||x.active){ toast("已经是当前模型"); return; }
     const g=groupOf(x);
-    if(g==="free"){ switchModel(x); return; }
-    const rows=[["模型 ID",x.model_name],["倍率",priceText(x)],["平台","WorkBuddy"],
-      ["上下文",x.context_window?ctxText(x.context_window):"未知"]];
+    /* R2.49：切换会改变 low 和 high 两种对外模型实际调用的上游模型（置顶优先、
+       仍可自动兜底）。弹窗说明影响，用户确认后才写 manual_model。 */
+    const rows=[
+      ["模型 ID",x.model_name],
+      ["倍率",priceText(x)],
+      ["平台",x.platform==="qoder"?"Qoder":"WorkBuddy"],
+      ["上下文",x.context_window?ctxText(x.context_window):"未知"],
+      ["影响",`low 与 high 的实际调用模型都会置顶为「${x.display_name||x.model_name}」（该模型不可用时自动回落，不锁死）`],
+    ];
     const ok=await dialog({
       title:x.display_name||x.model_name,
       rows, confirmText:"切换", danger:g==="high",
@@ -1581,13 +1621,45 @@ function paintModels(){
 
 async function switchModel(x){
   try{
-    await postJSON("model",{model:x.model_name});
-    toast("已切换到 "+(x.display_name||x.model_name));
+    // R2.49：写调度真正读的 routes.json::manual_model（置顶优先，可自动兜底），
+    // 并顺手清掉 P15 旧锁——旧锁完全绕过自动调度，且调度页看不见也清不掉。
+    // 以前这里写的是 state.json::active_model，真实调度根本不读它，点了毫无效果。
+    await postJSON("schedule",{manual_model:x.model_name, clear_legacy_lock:true});
+    toast("已置顶 "+(x.display_name||x.model_name)+"（low/high 都生效，不可用时自动回落）");
     await refreshChip();
-    // R2.45：切模型后重绘要带上上一次的账号/最近调度/不可用原因，
-    // 否则 renderModels 的 blocked 参数被写成 null，顶部「没有可用账号」卡片会消失。
-    renderModels(M.items.map(i=>({...i,active:i.model_name===x.model_name})),
-      M.activeAcc, M.recentSchedule, M.blocked);
+    // 重绘带上账号/最近调度/不可用原因，否则「没有可用账号」卡片会消失。
+    try{
+      const d=await getJSON("models");
+      if(d){
+        M.items=d.items||[]; M.activeAcc=d.active_account||null;
+        M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
+        M.active=M.items.find(i=>i.active)||null;
+        paintModels();
+      }
+    }catch(e){}
+    // R2.49：置顶后顶部按钮栏补出「恢复自动调度」按钮（不改 DOM 结构就地加）
+    const filters=document.getElementById("filters");
+    if(filters && !document.getElementById("resetModelPin")){
+      const btn=document.createElement("button");
+      btn.className="fchip"; btn.id="resetModelPin";
+      btn.title="清除置顶，low/high 都恢复自动调度";
+      btn.textContent="↺ 恢复自动调度";
+      filters.appendChild(btn);
+      btn.onclick=async()=>{
+        try{
+          await postJSON("schedule",{manual_model:null});
+          toast("已恢复自动调度（low/high）");
+          M.manualModel=null; btn.remove();
+          await refreshChip();
+          const d=await getJSON("models");
+          if(d){
+            M.items=d.items||[]; M.activeAcc=d.active_account||null;
+            M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
+            M.active=M.items.find(i=>i.active)||null; paintModels();
+          }
+        }catch(e){ toast("恢复失败："+e.message); }
+      };
+    }
   }catch(e){ toast("切换失败："+e.message); }
 }
 

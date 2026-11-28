@@ -122,6 +122,13 @@ def _pool_health(est_tokens: int | None = None, st=None) -> dict[str, Any]:
     probe = est_tokens if est_tokens is not None else (real_tokens or 200)
 
     pool, _rejected = _candidate_pool(est_tokens=probe)
+    # R2.49：固定容量分母——忽略临时冷却的池子，算「本来能有多少 账号×免费模型」。
+    # 分子（free_pairs/free_accounts）仍用当前真实可用池，两者分开后
+    # 账号冷却就会显示 1/2 而不是 1/1（旧的 1/1 掩盖了「少了一个账号」）。
+    try:
+        base_pool, _ = _candidate_pool(est_tokens=probe, ignore_cooldowns=True)
+    except TypeError:  # 兼容 monkeypatch 掉参数的老测试 stub
+        base_pool = pool
     total = len(pool)
     unknown = [c for c in pool if c.est_cost is None]
     catalog_free = _catalog_free_models()
@@ -154,11 +161,19 @@ def _pool_health(est_tokens: int | None = None, st=None) -> dict[str, Any]:
         and all(c.est_cost is None for c in pool if c.model_name == mid)
     )
 
-    # 容量 = 真免费模型数 × 可用账号数（每个真免费模型对每个账号都有一份）
+    # 当前可用账号（分子口径）
     free_accounts: dict[str, list[str]] = {}
     for c in truly_free:
         free_accounts.setdefault(c.account_label, []).append(c.model_name)
-    capacity = len(truly_free_models) * len(free_accounts)
+    # R2.49：容量分母 = 真免费模型数 × 「池子本来有的」账号数（忽略临时冷却）。
+    # 基准池里所有带真免费模型的账号都算容量，哪怕它此刻正在冷却——
+    # 这样 1 个账号冷却时就显示 1/2，用户一眼看出「少了一个」，而不是骗人的 1/1。
+    base_free_accounts: set[str] = set()
+    for c in base_pool:
+        if c.model_name in catalog_free and c.est_cost is not None and c.est_cost <= 0:
+            base_free_accounts.add(c.account_label)
+    # 至少不能小于当前可用账号数（防 base_pool monkeypatch/异常时倒挂）
+    capacity = len(truly_free_models) * max(len(base_free_accounts), len(free_accounts))
 
     return {
         "est_tokens": probe,

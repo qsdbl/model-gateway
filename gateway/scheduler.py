@@ -62,11 +62,18 @@ class Plan:
         return self.candidates[0] if self.candidates else None
 
 
-def _candidate_pool(est_tokens: int = 0) -> tuple[list[Candidate], list[dict[str, str]]]:
+def _candidate_pool(
+    est_tokens: int = 0, *, ignore_cooldowns: bool = False,
+) -> tuple[list[Candidate], list[dict[str, str]]]:
     """构造 (账号 × 模型) 的候选池。返回 (候选, 已排除项)。
 
     `est_tokens` 是本次请求的预计输入 token 数，用来算每个模型的**预计扣费**
     （P41：上游按 token 计费，同一个模型对不同长度价格完全不同）。
+
+    R2.49：`ignore_cooldowns=True` 只用于**免费池容量分母**——算「这个池子本来
+    能容纳多少 账号×免费模型」时要忽略临时冷却，否则分子分母取自同一份池子，
+    账号一冷却分母就跟着缩水，永远显示 N/N 满格，掩盖了「少了一个账号」。
+    真实调度绝不能开这个开关（冷却账号必须剔除）。
     """
     from . import costmodel
     from .app import _account_snapshot
@@ -142,12 +149,15 @@ def _candidate_pool(est_tokens: int = 0) -> tuple[list[Candidate], list[dict[str
                                  "reason": "余额为 0（付费模型需积分）"})
                 continue
             until = cooldowns.get((label, mid))
-            if until and until > now:
+            cooling = bool(until and until > now)
+            if cooling and not ignore_cooldowns:
                 rejected.append({
                     "account": label, "model": mid,
                     "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
                 })
                 continue
+            # R2.49：ignore_cooldowns 时冷却项仍进池，但打上 cooldown_until 标记；
+            # 上层用它算「容量分母」，真实调度（默认）冷却项早被 continue 剔除。
             curve = curves.get(mid)
             est_cost = curve.cost_at(est_tokens) if curve else None
             out.append(Candidate(
@@ -209,7 +219,7 @@ def _candidate_pool(est_tokens: int = 0) -> tuple[list[Candidate], list[dict[str
             if not mid:
                 continue
             until = cooldowns.get((label, mid))
-            if until and until > now:
+            if until and until > now and not ignore_cooldowns:
                 rejected.append({
                     "account": label, "model": mid,
                     "reason": f"冷却中（到 {time.strftime('%H:%M', time.localtime(until))}）",
@@ -781,3 +791,19 @@ def mark_cooldown(candidate: Candidate, until_at: float, reason: str) -> None:
         )
     except Exception:
         pass
+    # R2.49：免费模型撞 429 code 6004（额度用完）→ 当天首次发独立提醒。
+    # 只认 6004（时段配额耗尽），普通超时/连接重置不打扰用户；
+    # 只在官方免费池模型上触发（付费模型的 429 走其他口径）。
+    # 邮件是旁路，任何异常都不能影响冷却/调度。
+    if "6004" in (reason or "") and _is_free_pool(candidate):
+        try:
+            from . import notify
+            notify.note_free_exhausted(
+                account=candidate.account_label,
+                model=candidate.model_name,
+                platform=candidate.platform,
+                reset_at=until_at,
+                reason=reason,
+            )
+        except Exception:
+            pass

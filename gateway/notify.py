@@ -173,6 +173,80 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     return ok
 
 
+# ---------------- low：某账号免费模型额度用完 / 429 ----------------
+# R2.49：与「开始消耗积分」是**独立事件**，各自独立去重。
+# 用户明确：额度占用（去重标记）不该吞掉另一类提醒。
+_FREE_EXHAUSTED_KEY = _PREFIX + "free_exhausted_sent_on"
+
+
+def note_free_exhausted(*, account: str, model: str, platform: str | None = None,
+                        reset_at: float | None = None,
+                        reason: str | None = None) -> bool:
+    """某账号的免费模型撞 429 code 6004（额度用完）→ 当天首次发一封提醒。
+
+    触发判据由调用方给出（调度 cooldown 写入 / 请求 error 里出现 6004）。
+    本函数只管「提醒 + 去重」，去重按**天 + 账号**滚动：
+    - 同一天同一账号只发一次；
+    - 不同账号各发一次（A 号用完不影响 B 号的提醒）。
+    与 `note_paid_start` 的 `low_paid_sent_on` 完全独立。
+    """
+    today = date.today().isoformat()
+    seen = _get_json(_FREE_EXHAUSTED_KEY, {})
+    if not isinstance(seen, dict):
+        seen = {}
+    last = seen.get(account)
+    if isinstance(last, str) and last == today:
+        return False
+
+    account_disp = display_label(account)
+    plat_disp = (platform or "").strip()
+    if plat_disp:
+        plat_disp = {"workbuddy": "WorkBuddy", "qoder": "Qoder"}.get(
+            plat_disp.lower(), plat_disp)
+    account_row = f"{plat_disp} · {account_disp}" if plat_disp else account_disp
+    reset_text = ""
+    if reset_at:
+        try:
+            reset_text = datetime.fromtimestamp(reset_at).strftime("%m-%d %H:%M")
+        except Exception:
+            reset_text = str(reset_at)
+    why = (reason or "上游返回 429（code 6004）：使用量超出频率限制").strip()
+
+    subject = "[网关] 免费额度用完"
+    intro = "一个账号的免费模型触发了 429 限额，暂时不能继续用免费模型。"
+    rows = [
+        ("账号", account_row),
+        ("模型", model),
+        ("原因", why),
+        ("重置时间", reset_text or "上游未提供"),
+        ("影响", "该账号的免费模型暂时冷却；其他账号 / 付费模型不受影响"),
+    ]
+    text = intro + "\n\n" + "\n".join(f"{k}：{v}" for k, v in rows) + "\n"
+    footnote = (
+        "当天该账号只提醒一次；重置后自动恢复。这是「额度用完」提醒，"
+        "与「开始消耗积分」是两件事，互不占用提醒名额。"
+    )
+    html = mailer.card_html(
+        title="免费额度用完",
+        subtitle=f"{date.today().isoformat()} · 账号免费模型触发 429 限额",
+        badge="额度提醒",
+        rows=rows,
+        cta="", link="",
+        intro=intro,
+        footnote=footnote,
+        section_title="本次概况",
+        grad="#854F0B,#B45309",          # 琥珀：需留意但不紧急，区别于扣费的橙
+        button_color="#B45309",
+        badge_fg="#854F0B",
+        badge_bg="#FEF3C7",
+    )
+    ok = _send(subject, text, html=html)
+    if ok:
+        seen[account] = today
+        _set_json(_FREE_EXHAUSTED_KEY, seen)
+    return ok
+
+
 # ---------------- high：单账号积分将耗尽 ----------------
 
 def _balance_history() -> dict[str, list[list[float]]]:

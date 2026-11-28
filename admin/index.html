@@ -1407,7 +1407,7 @@ function renderModels(items,activeAcc,recentSchedule,blocked,manualModel,mode){
     <div class="filters" id="filters">
       <button class="fchip" data-s="rec" aria-pressed="${M.scope==="rec"}">常用</button>
       <button class="fchip" data-s="all" aria-pressed="${M.scope==="all"}">全部</button>
-      <button class="fchip" data-s="free" aria-pressed="${M.scope==="free"}">免费</button>
+      ${isHigh?"":`<button class="fchip" data-s="free" aria-pressed="${M.scope==="free"}">免费</button>`}
       <button class="fchip" data-s="image" aria-pressed="${M.scope==="image"}">支持图片</button>
       ${M.manualModel?`<button class="fchip" id="resetModelPin" title="清除本档位置顶，恢复自动调度">↺ 恢复默认</button>`:""}
     </div>
@@ -1539,6 +1539,9 @@ function paintModels(){
     const groups=[];
     const gi=new Map();
     for(const it of (rs.items||[])){
+      // R2.54：high 档「最近调度」不该出现免费池模型（hy4flash-free 等）——
+      // 那是 low 的历史，混进来会让用户以为 high 在用免费模型。
+      if(M.mode==="high" && it.is_free_pool) continue;
       const k=(it.platform||"?")+"|"+it.model_name;
       let g=gi.get(k);
       if(!g){ g={platform:it.platform,model:it.model_name,
@@ -1761,7 +1764,9 @@ const US={day:new Map(),cache:new Map(),hour:new Map(),hourCache:new Map(),bill:
   metric:new Map(),chart:new Map(),
   /* R2.53：小时下钻状态。第一次点柱选中小时，第二次点同一柱进入「分钟分桶」视图。
      drill: Map<label, bool>；bucket: Map<label, 6|10>（分桶粒度，默认 10 分钟）。 */
-  drill:new Map(), bucket:new Map(),
+  /* R2.55：下钻固定 10 分钟粒度，图形改柱状/折线切换（drillChart，默认 bar）。
+     旧 bucket Map 保留仅为兼容已有状态，不再给用户选 6/10。 */
+  drill:new Map(), bucket:new Map(), drillChart:new Map(),
   mode:new Map(),  /* R1.1：每个账号（含 __all__ 汇总）独立的 low/high/全部 选择 */
   /* R2.19/R2.23：小时明细展开条数（key=label|day|hour，默认 10，刷新页面自动重置）。
      R2.23 删掉 liveHour——默认就是实时跟踪最新小时，不需要额外开关。 */
@@ -1907,8 +1912,9 @@ function drillHTML(label,d,hour,metric,mode){
   const key=label+"|"+d.day+"|"+hour;
   const items=US.hourCache.get(key);
   if(!Array.isArray(items)||!items.length) return "";
-  const bucket=US.bucket.get(label)||10;              // 6 / 10 分钟
-  const nBucket=Math.ceil(60/bucket);
+  /* R2.55：固定 10 分钟粒度（6 桶），不再让用户选 6/10；图形改柱状/折线切换。 */
+  const bucket=10, nBucket=6;
+  const dchart=US.drillChart.get(label)||"bar";
   const met=METRICS.find(x=>x.k===metric)||METRICS[0];
   const modeVal=it=>{
     if(mode==="low"||mode==="high") return (it.public_model||"low")===mode;
@@ -1923,18 +1929,42 @@ function drillHTML(label,d,hour,metric,mode){
     buckets[bi]+=val(it);
   }
   const peak=Math.max(1,...buckets);
-  const bars=buckets.map((v,i)=>{
-    const start=i*bucket, end=Math.min(60,start+bucket);
-    const hgt=v?Math.max(3,Math.round((v/peak)*44)):1;
-    return `<button type="button" class="dbucket" title="${pad2(start)}-${pad2(end)} 分 · ${met.fmt(v)}">
-      <i style="height:${hgt}px"></i><span>${pad2(start)}</span></button>`;
-  }).join("");
-  const seg=[6,10].map(n=>`<button type="button" data-bucket="${n}" aria-pressed="${bucket===n}">${n} 分钟</button>`).join("");
+  /* R2.55：峰值前三点（降序前 3 个非零桶）直接标数值，与主图一致。 */
+  const topIdx=new Set(buckets.map((v,i)=>({v,i})).filter(x=>x.v>0)
+    .sort((a,b)=>b.v-a.v).slice(0,3).map(x=>x.i));
+  let graphic;
+  if(dchart==="line"){
+    /* 折线：内联 SVG，点可悬停看具体分桶；峰值三点旁标数值。 */
+    const W=600,H=54,PAD=3,N=nBucket-1;
+    const pts=buckets.map((v,i)=>({x:PAD+(i/N)*(W-2*PAD),
+      y:H-PAD-(v/peak)*(H-2*PAD),v,i}));
+    const poly=pts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" ");
+    const dots=pts.map(p=>p.v?`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}"
+      r="${topIdx.has(p.i)?3.2:2.4}" class="dlinepk"><title>${pad2(p.i*bucket)} 分 · ${met.fmt(p.v)}</title></circle>`:"").join("");
+    const labels=pts.filter(p=>topIdx.has(p.i)).map(p=>{
+      const left=Math.min(92,Math.max(8,p.x/W*100));
+      const top=Math.max(2,Math.min(96,p.y/H*100));
+      return `<span class="hlinepk" style="left:${left.toFixed(1)}%;top:${top.toFixed(1)}%">${met.fmt(p.v)}</span>`;
+    }).join("");
+    graphic=`<div class="dline"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline points="${poly}" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>${dots}</svg>${labels}</div>`;
+  }else{
+    const bars=buckets.map((v,i)=>{
+      const start=i*bucket, end=Math.min(60,start+bucket);
+      /* R2.55：非零柱最小 8px，数据少时贴底看不见的问题缓解。 */
+      const hgt=v?Math.max(8,Math.round((v/peak)*44)):1;
+      return `<div class="dbucket" title="${pad2(start)}-${pad2(end)} 分 · ${met.fmt(v)}">
+        <i style="height:${hgt}px"></i>${topIdx.has(i)?`<span class="dbpk" style="bottom:${hgt}px">${met.fmt(v)}</span>`:""}
+        <span class="dtick">${pad2(start)}</span></div>`;
+    }).join("");
+    graphic=`<div class="dbars">${bars}</div>`;
+  }
+  const seg=[["bar","柱状"],["line","折线"]].map(([k,n])=>
+    `<button type="button" data-drill-chart="${k}" aria-pressed="${dchart===k}">${n}</button>`).join("");
   return `<div class="drill">
-    <div class="drillhead"><span>${hour}:00 内分布 · ${met.n}</span>
-      <span class="hseg dbseg">${seg}</span>
-      <button type="button" class="drillback" data-drill-back title="返回小时视图">收起分布</button></div>
-    <div class="dbars">${bars}</div></div>`;
+    <div class="drillhead"><span>${hour}:00 内分布 · 10 分钟/格 · ${met.n}</span>
+      <span class="hseg dbseg">${seg}</span></div>
+    ${graphic}</div>`;
 }
 
 function hourBody(label,d,hour,isLatest){
@@ -2134,7 +2164,9 @@ function hoursHTML(label,d){
   }else{
     const bars=shownHrs.map(h=>{
       const v=val(h);
-      const hgt=v?Math.max(4,Math.round((v/peak)*54)):2;
+      /* R2.55：非零柱最小 8px（原来 4px）——数据量少、数值小时柱子贴底几乎看不见，
+         适当拉高更直观；零值仍 2px 表示无数据，不虚报。 */
+      const hgt=v?Math.max(8,Math.round((v/peak)*54)):2;
       const isPeak=topHours.has(h.hour);
       /* 全部模式：一根柱分两段——low 在下（主色），high 在上（紫）。 */
       let inner;
@@ -2152,7 +2184,9 @@ function hoursHTML(label,d){
       return `<button type="button" data-hour="${h.hour}" class="${h.errors?"haserr":""} ${showBoth?"stacked":""}"
         aria-pressed="${sel===h.hour}" aria-label="${h.hour} 点 ${met.fmt(v)}"
         title="${tip}">${inner}${
-          isPeak?`<span class="hbarpk">${met.fmt(v)}</span>`:""}</button>`;
+          /* R2.55：标签贴各自柱顶，而不是统一贴在 button 顶部（原来三根柱
+             高低不同、标签却挤在同一行）。bottom 用柱高 hgt，按钮是 relative。 */
+          isPeak?`<span class="hbarpk" style="bottom:${hgt}px">${met.fmt(v)}</span>`:""}</button>`;
     }).join("");
     const legend=showBoth?`<div class="hlegend"><span><i style="background:var(--accent)"></i>low</span><span><i style="background:var(--purple,#8944AB)"></i>high</span></div>`:"";
     graph=`<div class="hbars">${bars}</div>${legend}`;
@@ -2337,6 +2371,8 @@ function bindUsage(host,label,day){
 /* R1.2：账号显示名唯一口径 —— 与 gateway/display.py 的 DISPLAY_ALIAS 保持同一张表。
    内部昵称必须显示手机号掩码，不能露出内部标签。
    改这里必须同步 gateway/display.py（README §14 有约定）。 */
+/* 脱敏：开源版不硬编码任何真实账号掩码/昵称，留空表；
+   手机号由下方正则自动掩码，昵称映射可通过后端 GATEWAY_DISPLAY_ALIAS 配置。 */
 const DISP_ALIAS={};
 function dispLabel(l){
   const s=String(l||"").replace(/^qoder:/,"");
@@ -4094,6 +4130,8 @@ function renderSchedule(d){
       const r=rankOf(m,highRank);
       const inHigh=r>=0;
       const rank=inHigh?r+1:0;
+      // R2.54：high 区也要显示 high 档置顶徽标（与 low 区 isManual 对称）。
+      const isManualHigh=(m.variants||[m]).some(x=>String(d.manual_model_high||"").toLowerCase()===String(x.model||"").toLowerCase());
       // 平台角标：合并行列出它存在于哪些平台；未启用平台的角标淡化。
       const badges=(m.platforms||[m.platform||"workbuddy"]).map(p=>
         `<span class="ptag${hpSet.has(String(p).toLowerCase())?"":" dim"}" data-plat="${esc(String(p).toLowerCase())}" title="${esc(PLAT_FULL[p]||p)}">${esc(PLAT_SHORT[p]||p)}</span>`).join("");
@@ -4101,7 +4139,7 @@ function renderSchedule(d){
       const shown=(m.variants||[m]).some(x=>hpSet.has(String(x.platform||"workbuddy").toLowerCase()));
       h+=`<div class="orderrow${inHigh?"":" off"}${!shown?" hidden-plat":""}${!SCH.expand.high&&i>=3?" folded":""}" data-hmodel="${esc(rep)}" data-plats="${esc((m.platforms||[]).join(","))}">
         <span class="handle" style="cursor:${inHigh?"grab":"default"};opacity:${inHigh?1:.3}">⣿</span>
-        <span class="omodel">${badges}${freePill(m)}<span class="mname">${esc(m.display_name||m.model)}</span>${inHigh?`<span class="pill info">high #${rank}</span>`:""}${nc?`<span class="pill plain hminor">${nc} 次</span>`:""}</span>
+        <span class="omodel">${badges}${freePill(m)}<span class="mname">${esc(m.display_name||m.model)}</span>${inHigh?`<span class="pill info">high #${rank}</span>`:""}${isManualHigh?'<span class="pill info">high 指定</span>':""}${nc?`<span class="pill plain hminor">${nc} 次</span>`:""}</span>
         <span class="ometa">${esc(schMeta(m))}</span>
         <span class="oact"><button data-high="1" aria-pressed="${inHigh?"true":"false"}">${inHigh?"已启用":"启用"}</button></span></div>`;
     });
@@ -4697,16 +4735,22 @@ async function liveRefresh(){
       if(sw){ SW.segs=sw; swDraw(); }
     }else if(p==="models"){
       let d;
-      try{ d=await getJSON("models"); }catch{ d=null; }
+      // R2.54：必须带当前档位——否则 5 秒刷新走后端默认 low，把 high 的
+      // items 覆盖成 low 全量目录（连 hy4flash-free 都冒出来），这正是
+      // 「high 和 low 一样」的核心根因。首屏 load() 已带 mode，这里补齐。
+      try{ d=await getJSON("models?mode="+encodeURIComponent(M.mode)); }catch{ d=null; }
       if(d){
         M.items=d.items||[]; M.activeAcc=d.active_account||null;
         M.blocked=d.blocked||null;
         M.recentSchedule=d.recent_schedule||null;
+        M.manualModel=d.manual_model||null;
         M.active=M.items.find(x=>x.active)||null;
         paintModels();
       }
-      try{ await loadForecast(true); }catch{}   // 免费池强制拉新（含新扫码账号）
-      paintFreeBar();
+      if(M.mode!=="high"){
+        try{ await loadForecast(true); }catch{}   // 免费池强制拉新（含新扫码账号）
+        paintFreeBar();
+      }
     }else if(p==="routes"){
       // 配置页（拖拽/下拉/开关），不自动刷，避免打断操作
       return;

@@ -225,6 +225,92 @@ def _live_models() -> list[dict]:
     return items
 
 
+def _high_model_items() -> list[dict]:
+    """high 档「强模型清单」——与路由页 high 区块完全同一口径。
+
+    R2.54：模型页 high tab 以前直接显示 `_live_models()` 的全部 WorkBuddy
+    目录（连 hy4flash-free 免费模型都在里面），和 low 一模一样。用户要的是
+    「和路由页配置的一样」——只显示 routing 里 high 强模型清单**已勾选启用**
+    的那些，按 model_order 顺序，且只保留 high_enabled_platforms 选中的平台。
+
+    数据源复用 `_model_view(include_qoder=True)`（与 /schedule 的 models 同源），
+    所以 Qoder 独有模型（DeepSeek-Flash / GLM-5.3-Flash）也能出现。输出字段
+    映射成模型页 modelRow 需要的格式（model_name / pricing / price_factor …）。
+    """
+    cfg = router.load_config()
+    profiles = cfg.get("profiles") or {}
+    high_prof = profiles.get("high") or {}
+    order = [str(x) for x in (high_prof.get("model_order") or [])]
+    if not order:
+        return []  # 没配 high 清单就别显示任何东西（不是退回全部目录）
+    order_lc = {m.lower(): i for i, m in enumerate(order)}
+    raw_hp = [str(x).lower() for x in (high_prof.get("enabled_platforms") or [])]
+    hp_set = set(raw_hp) if raw_hp else {"workbuddy", "qoder"}
+
+    # 从 schedule 同源数据取双平台目录，字段是 model/platform/factor/...
+    source = _model_view(est_tokens=200, include_qoder=True)
+    # 按小写名合并同名（WB glm-5.3-flash 与 Qoder GLM-5.3-Flash 是一行）
+    merged: dict[str, dict] = {}
+    for m in source:
+        key = str(m.get("model") or "").lower()
+        if not key:
+            continue
+        g = merged.setdefault(key, {"variants": [], "platforms": []})
+        g["variants"].append(m)
+        if m.get("platform") not in g["platforms"]:
+            g["platforms"].append(m.get("platform"))
+
+    out: list[dict] = []
+    for key, g in merged.items():
+        variants = g["variants"]
+        # 只保留属于已启用平台的 variant；整行没有任何启用平台 variant → 隐藏
+        kept = [v for v in variants
+                if str(v.get("platform") or "workbuddy").lower() in hp_set]
+        if not kept:
+            continue
+        # 启用态：任一 variant 的原始 id 命中 model_order（大小写不敏感）
+        hit = [v for v in kept if str(v.get("model") or "").lower() in order_lc]
+        if not hit:
+            continue  # 未勾选的模型不进 high tab
+        rank = min(order_lc[str(v["model"]).lower()] for v in hit)
+        # 代表 variant 用命中的那个（写置顶/展示 ID 用当前启用平台侧的 id）
+        rep = hit[0]
+        mid = rep.get("model") or ""
+        factor = rep.get("factor")
+        is_free = bool(rep.get("is_free_pool"))
+        pricing = "free" if is_free else ("unknown" if factor is None else "fixed")
+        out.append({
+            "platform": rep.get("platform") or "workbuddy",
+            "model_name": mid,
+            "display_name": rep.get("display_name") or mid,
+            "public_name": settings.high_model,
+            "is_free": is_free,
+            "is_free_pool": is_free,
+            "price_factor": factor,
+            "pricing": pricing,
+            "est_cost": rep.get("est_cost"),
+            "free_upto": rep.get("free_upto") or 0,
+            "always_free": bool(rep.get("always_free")),
+            "promotion_until": None,
+            "promotion_status": "—",
+            "tools": rep.get("tools"),
+            "image": rep.get("image"),
+            "context_window": rep.get("context_window"),
+            "description": None,
+            "badge": rep.get("badge"),
+            "kind": rep.get("kind", "chat"),
+            "recommended": True,
+            "is_default": False,
+            "fetched_at": None,
+            "active": False,
+            "_rank": rank,
+        })
+    out.sort(key=lambda x: (x["_rank"], x["model_name"]))
+    for it in out:
+        it.pop("_rank", None)
+    return out
+
+
 def _mask_path(p: str | None) -> str:
     """凭据路径只显示文件名，不暴露目录结构。"""
     if not p:
@@ -322,7 +408,7 @@ def _accounts_rich() -> list[dict]:
 
     usage = store.usage_by_account(30)
     db = {r["label"]: r for r in store.list_accounts()}
-    # R2.38：凭据续期失败状态（renew_state）合并进账号行。
+    # R2.39：凭据续期失败状态（renew_state）合并进账号行。
     # production 写 platform="WorkBuddy"/"Qoder"，测试写小写——按 lower 归一建索引。
     renew = {}
     try:
@@ -529,7 +615,7 @@ def _accounts_rich() -> list[dict]:
     rows.sort(key=lambda r: r["balance"] if r["balance"] is not None else -1, reverse=True)
     # R1.9：每个账号挂一个 in_routing，前端据此标注「余额为 0 · 不参与调度」，
     # 与平台汇总的 routing 计数、真实候选池三处口径一致。
-    # R2.38：凭据续期失败 / 已过期 → 账号行显示红色「重新授权」按钮。
+    # R2.39：凭据续期失败 / 已过期 → 账号行显示红色「重新授权」按钮。
     from . import signin as _signin
     for r in rows:
         r["in_routing"] = _in_routing(r)
@@ -783,14 +869,14 @@ async def api_import_account(request: Request) -> dict:
     except ImportError_ as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # 让紧随其后的账号列表读到刚导入的新凭据，而不是 60s 旧缓存。
+    # R2.41：让紧随其后的账号列表读到刚导入的新凭据，而不是 60s 旧缓存。
+    # 旧缓存可能来自「被覆盖前的旧 token」，不清会出现「导入成功但仍显示旧余额」。
     try:
         from .app import _wb_balance_cache
 
         _wb_balance_cache.pop(result["label"], None)
     except Exception:
         pass
-    # 登记进 DB（启用 + 余额），列表马上能看到；凭据内容不进 DB
     store.upsert_account(
         label=result["label"], platform="workbuddy",
         credential_path=str(Path(settings.credential_dir) / result["file"]),
@@ -800,13 +886,19 @@ async def api_import_account(request: Request) -> dict:
         store.update_balance(
             result["label"], result["balance"], "credits_workbuddy", time.time()
         )
+    # 重新扫码 = 人工恢复登录态，且 import 已验证通过 → 清掉续期失败告警。
     store.clear_renew_state(result["label"], "workbuddy")
     return {"ok": True, "account": result, "verified": True}
 
 
 @admin.post("/accounts/remove")
 async def api_remove_account(request: Request) -> dict:
-    """把一个账号从网关彻底剔除：删凭据文件 + DB 登记 + 告警状态。"""
+    """把一个账号从网关彻底剔除：删凭据文件 + DB 登记 + 告警状态。
+
+    凭据文件的存在本身就是「账号在池里」的依据（known_accounts 从文件枚举），
+    所以只删 DB 行没用，下次刷新还会读回来。这里连文件一起删。
+    该操作不可撤销，前端必须二次确认。
+    """
     require_admin_token(request)
     try:
         body = await request.json()
@@ -824,6 +916,7 @@ async def api_remove_account(request: Request) -> dict:
         cred_dir = Path(__file__).resolve().parent.parent / cred_dir
     candidates = [cred_dir / f"{label}.info"]
     if platform == "qoder":
+        # qoder:<掩码> → 凭据文件用裸标签
         bare = label.split(":", 1)[1] if ":" in label else label
         candidates.append(cred_dir / f"{bare}.qoder.json")
     for path in candidates:
@@ -842,6 +935,7 @@ async def api_remove_account(request: Request) -> dict:
         store.clear_renew_state(label, "Qoder")
     except Exception:
         pass
+    # 清掉账单缓存，别让已删账号的旧余额继续显示。
     try:
         from .app import _wb_balance_cache
 
@@ -925,14 +1019,21 @@ async def api_models(request: Request) -> dict:
         except Exception:
             recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
         blocked = _preview_call(_preview_blocked, mode)
-        # _live_models() 返回的是缓存里的同一个 list，改元素会污染缓存 → 先拷贝
-        items = [dict(it) for it in _live_models()]
+        # R2.54：high 档只显示路由页 high 强模型清单「已启用」的模型（含 Qoder），
+        # 不再把 low 的全部 WorkBuddy 目录（连 hy4flash-free）搬过来。
+        # _live_models() 返回的缓存 list 改元素会污染缓存 → low 先拷贝。
+        if mode == "high":
+            items = _high_model_items()
+        else:
+            items = [dict(it) for it in _live_models()]
         # R2.51：本档位当前会选的上游模型 → 标 active（high 不能再标 low 的免费模型）
         preview = _preview_call(_active_preview, mode)
         active_name = _active_model_for(mode, preview)
+        # R2.54：大小写不敏感匹配（high 清单 Qoder id 与 preview 可能仅大小写不同）。
+        active_lc = str(active_name).lower() if active_name else ""
         for it in items:
-            it["active"] = (not blocked and active_name is not None
-                            and it.get("model_name") == active_name)
+            it["active"] = (not blocked and bool(active_lc)
+                            and str(it.get("model_name") or "").lower() == active_lc)
         items = _attach_preview_price(items, preview)
         active_acc = _active_account_for(mode, preview)
         return {"items": items,
@@ -953,6 +1054,23 @@ async def api_models(request: Request) -> dict:
     blocked = _preview_call(_preview_blocked, mode)
     if blocked:
         active = None
+    # R2.54：high 档同 live 分支——只显示路由页配置的强模型清单，不用 DB 全量目录。
+    if mode == "high":
+        items = _high_model_items()
+        # R2.54：与 live 分支一致标 active（否则 DB 分支对勾永不显示）。
+        # 大小写不敏感匹配：清单里的 id 与 preview.model_name 可能仅大小写不同
+        # （WB glm-5.3-flash / Qoder GLM-5.3-Flash）。
+        active_lc = str(active or "").lower()
+        for it in items:
+            it["active"] = (not blocked and bool(active_lc)
+                            and str(it.get("model_name") or "").lower() == active_lc)
+        items = _attach_preview_price(items, active_preview)
+        recent = _recent_schedule_view(
+            store.recent_schedule(window_minutes=5, public_model=public_model))
+        active_acc = _active_account_for(mode, active_preview)
+        return {"items": items, "active_account": active_acc,
+                "blocked": blocked, "recent_schedule": recent,
+                "mode": mode, "manual_model": _current_manual_model(mode)}
     items = []
     for r in rows:
         promo = r["promotion_until"]
@@ -1367,34 +1485,46 @@ async def api_save_schedule(request: Request) -> dict:
         if not isinstance(disabled, list):
             raise HTTPException(status_code=400, detail="disabled_models must be a list")
         cfg["disabled_models"] = [str(x) for x in disabled]
-    def _validate_model_id(mid: str) -> str:
+    def _validate_model_id(mid: str, allow_qoder: bool = False) -> str:
         # 只允许指定目录里真实存在的模型，避免写个不存在的 id 让上游 404。
         if settings.upstream == "workbuddy":
             from .workbuddy_upstream import catalog
             ids = {r.get("model_name") for r in catalog()}
+            # R2.54：high 档允许 Qoder 模型（DeepSeek-Flash / GLM-5.3-Flash
+            # 等），这些不在 workbuddy catalog 里。放开 Qoder 目录再校验。
+            if allow_qoder:
+                try:
+                    from . import qoder_upstream as qu
+                    ids |= {r.get("model_name") for r in qu.catalog()}
+                except Exception:
+                    pass
             if ids and mid not in ids:
                 raise HTTPException(status_code=400, detail=f"unknown model: {mid}")
         return mid
 
-    def _set_manual(key: str, value: Any) -> None:
+    def _set_manual(key: str, value: Any, allow_qoder: bool = False) -> None:
         if value is None or (isinstance(value, str) and not value.strip()):
             cfg[key] = None
         else:
-            cfg[key] = _validate_model_id(str(value).strip())
+            cfg[key] = _validate_model_id(str(value).strip(), allow_qoder=allow_qoder)
 
     # R2.51：low / high 各自独立的置顶。新前端写 manual_model_low/high；
     # 旧 manual_model 保留兼容——写它等于同时设置两档（老前端/测试仍可用）。
     if "manual_model" in body:
         # 旧键照写（老测试/老前端读它断言）；同时同步两档，行为等价于旧版「全局生效」。
-        _set_manual("manual_model", body["manual_model"])
-        _set_manual("manual_model_low", body["manual_model"])
-        _set_manual("manual_model_high", body["manual_model"])
+        # 同时设置两档时放开 Qoder（因为可能同步给 high）。
+        # 注意：老调用方只传 manual_model，body 里未必有 _low/_high 键 → 用同一个值。
+        _legacy_pin = body["manual_model"]
+        _set_manual("manual_model", _legacy_pin, allow_qoder=True)
+        _set_manual("manual_model_low", _legacy_pin, allow_qoder=True)
+        _set_manual("manual_model_high", _legacy_pin, allow_qoder=True)
     if "manual_model_low" in body:
         _set_manual("manual_model_low", body["manual_model_low"])
         # 用新键 = 分档语义，清掉旧全局键，免得另一档被旧值回退影响。
         cfg["manual_model"] = None
     if "manual_model_high" in body:
-        _set_manual("manual_model_high", body["manual_model_high"])
+        # R2.54：high 清单含 Qoder 模型，校验时放开 Qoder 目录。
+        _set_manual("manual_model_high", body["manual_model_high"], allow_qoder=True)
         cfg["manual_model"] = None
     if body.get("clear_legacy_lock"):
         # 清掉 P15 遗留的「完全手动锁」——它会让整个自动调度失效。

@@ -276,6 +276,7 @@ def _is_free_pool_by_name(model_name: str | None) -> bool:
     return is_official_free(model_name)
 
 
+# 「能力不符」类原因：跟账号状态无关，换个账号也一样被剔除。
 def _is_long_cooldown(reason: str, until_at: float, now: float | None = None) -> bool:
     """是否「长期额度耗尽」冷却（区别于临时超时/连接重置）。
 
@@ -291,9 +292,6 @@ def _is_long_cooldown(reason: str, until_at: float, now: float | None = None) ->
     return (float(until_at) - now) > 6 * 3600
 
 
-# 「能力不符」类原因：跟账号状态无关，换个账号也一样被剔除。
-# 旧实现按候选池顺序取前 3 条账号，平台顺序靠前的账号级 401 会把这类原因挤没，
-# 于是 503 只报「某某账号凭据失效」，用户去重新授权，回来照样失败。
 _CAPABILITY_REASONS = (
     "不支持工具调用", "不支持图片输入", "上下文", "已在 hidden_models", "模型已被禁用",
 )
@@ -318,10 +316,14 @@ def _plain_account(acc: str) -> str:
 def _summarize_rejected(rejected: list[dict[str, str]]) -> str:
     """把剔除原因压成「能力不符 + 账号状态」两段人话。
 
+    旧的实现按账号取前 3 条，顺序跟着候选池走（WorkBuddy 排在前面），
+    于是 4 个 WorkBuddy 401 就把真正决定这次请求失败的「Qoder 不支持工具调用」
+    挤没了。现在：
+
     - **能力类**（tools/image/context/禁用）按「平台 + 原因」聚合计数，
       排在最前面——它解释「为什么这次请求一个候选都没有」；
     - **账号状态类**（401/积分用完/冷却/未授权）按账号聚合，同原因的账号
-      并成一行，最多 2 组，避免同一句话重复多遍。
+      并成一行，最多 2 组，避免同一句话重复四遍。
     """
     account_reasons: dict[str, str] = {}       # 账号 → 原因（同账号只留一条）
     capability: dict[tuple[str, str], int] = {}  # (平台, 原因) → 候选数
@@ -604,9 +606,16 @@ def build_plan(
     # 改成置顶后：手动指定的模型排最前；它 429/下线了还能自动退到下一个，
     # 而不是整个服务挂掉。禁用列表仍然优先——禁掉的模型连置顶都不给。
     pinned_model: str | None = None
+    # R2.54：置顶匹配大小写不敏感。high 清单里 Qoder/WorkBuddy 同名模型大小写
+    # 不同（GLM-5.3-Flash vs glm-5.3-flash），写入的 variant id 与调度候选的
+    # model_name 可能仅大小写不同，精确匹配会让「置顶成功却静默失效」。
+    def _same_model(a: str | None, b: str | None) -> bool:
+        return bool(a and b and str(a).lower() == str(b).lower())
     if manual_model:
-        if any(c.model_name == manual_model for c in capable):
-            pinned_model = manual_model
+        hit = next((c for c in capable if _same_model(c.model_name, manual_model)), None)
+        if hit:
+            # 用候选里的真实 id，保证下面 pinned_cands 分组与排序都命中。
+            pinned_model = hit.model_name
             notes.append(f"手动指定 {manual_model}（置顶）")
         else:
             notes.append(f"手动指定的 {manual_model} 当前不可用，按自动顺序")
@@ -614,8 +623,8 @@ def build_plan(
     # ---- 费用条件 ----
     # 置顶的模型是用户亲手指定的 = 显式同意计费，不受「免费用完切付费」开关限制；
     # 其余候选照常走免费优先 / 付费兜底。
-    pinned_cands = [c for c in capable if pinned_model and c.model_name == pinned_model]
-    rest = [c for c in capable if not (pinned_model and c.model_name == pinned_model)]
+    pinned_cands = [c for c in capable if _same_model(c.model_name, pinned_model)]
+    rest = [c for c in capable if not _same_model(c.model_name, pinned_model)]
 
     if not allow_paid:
         # 「免费用完切付费」关掉了：本次预计要花钱的一律不用，宁可不服务。
@@ -665,7 +674,7 @@ def build_plan(
 
     def sort_key(c: Candidate) -> tuple:
         # 置顶的手动模型永远第一——只影响「谁先试」，其余候选仍留作兜底。
-        if pinned_model and c.model_name == pinned_model:
+        if _same_model(c.model_name, pinned_model):
             model_rank = -1
         elif c.model_name in order_idx and (is_high or strategy == "ordered"):
             model_rank = order_idx[c.model_name]
@@ -736,8 +745,15 @@ def preview_plan(est_tokens: int = 200, mode: str = "low") -> Plan:
         from .app import router
 
         cfg = router.load_config()
+        # R2.54：预览必须和真实请求同口径读分档置顶键。真实请求路径
+        # app.build_plan 用 _manual_model_for(cfg, mode)；这里不能 import app
+        # 顶层（循环依赖），内联同一逻辑：新键 manual_model_<mode> 优先，
+        # 回退旧 manual_model。否则 high 置顶后预览拿不到置顶，active/账号
+        # 全错（写新键会清掉旧全局键 → 预览完全看不到置顶）。
+        key = "manual_model_high" if mode == "high" else "manual_model_low"
+        manual = cfg.get(key) or cfg.get("manual_model") or None
         return build_plan(est_tokens=est_tokens,
-                          manual_model=cfg.get("manual_model") or None,
+                          manual_model=manual,
                           mode=mode)
     except Exception:
         return Plan()

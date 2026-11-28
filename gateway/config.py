@@ -3,6 +3,7 @@
 双部署设计（README 第 2.1 节）要求：零硬编码路径、端口/监听可配。
 """
 from __future__ import annotations
+import re
 
 import os
 from pathlib import Path
@@ -16,6 +17,9 @@ def _env_path(name: str, default: str) -> Path:
     raw = os.environ.get(name, default)
     p = Path(raw).expanduser()
     return p if p.is_absolute() else PROJECT_ROOT / p
+
+
+_GPT5_ALIAS_RE = re.compile(r"^gpt[-_]?5(?:\.\d+)?$", re.IGNORECASE)
 
 
 class Settings:
@@ -101,11 +105,25 @@ class Settings:
         _cw = os.environ.get("GATEWAY_CONTEXT_WINDOW", "").strip()
         self.context_window = int(_cw) if _cw else None
 
+    def canonical_model(self, model_name: str | None) -> str | None:
+        """把客户端模型名归一到已发布的对外模型名；未知名原样返回（由 mode_of 判 404）。
+
+        有些客户端（如 bot 创建流程）会自己填 `gpt-5` / `gpt-5.4` 这类具体版本名，
+        它们并不在网关对外发布的两个模型名里。这类统一归一到 low，别直接 404。
+        """
+        if not model_name:
+            return model_name
+        name = model_name.strip()
+        if _GPT5_ALIAS_RE.match(name):
+            return self.low_model
+        return name
+
     def mode_of(self, model_name: str | None) -> str:
         """把客户端传来的对外模型名归一到模式；未知名返回空串（调用方按 404 处理）。"""
-        if model_name == self.high_model:
+        name = self.canonical_model(model_name)
+        if name == self.high_model:
             return "high"
-        if model_name == self.low_model:
+        if name == self.low_model:
             return "low"
         return ""
 

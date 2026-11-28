@@ -756,15 +756,26 @@ async def api_remove_account(request: Request) -> dict:
 
 
 def _recent_schedule_view(recent: dict) -> dict:
-    """给 recent_schedule 的聚合项补免费池身份字段。
+    """给 recent_schedule 的聚合项补免费池身份 + 倍率。
 
-    R2.39b：用户要求「免费就免费，不免费写清楚倍率」。倍率直接用请求落库时
-    记录的 price_factor 快照（store.recent_schedule 已带出）；这里只补
-    is_free_pool（freepool 唯一真源）。
+    R2.39b：用户要求「免费就免费，不免费写清楚倍率」。倍率优先用请求落库时
+    记录的 price_factor 快照；老请求没记快照时回退到模型目录当前倍率。
+    免费池判定始终只认 freepool.is_official_free。
     """
     from .freepool import is_official_free
+    # 目录倍率索引：(platform, model) → price_factor
+    catalog: dict[tuple[str, str], float | None] = {}
+    try:
+        for r in store.list_models():
+            catalog[(r["platform"] or "workbuddy", r["model_name"])] = r["price_factor"]
+    except Exception:
+        pass
     for it in recent.get("items") or []:
-        it["is_free_pool"] = bool(is_official_free(it.get("model_name")))
+        mid = it.get("model_name")
+        it["is_free_pool"] = bool(is_official_free(mid))
+        if it.get("price_factor") is None:
+            it["price_factor"] = catalog.get(
+                (it.get("platform") or "workbuddy", mid))
     return recent
 
 

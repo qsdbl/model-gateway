@@ -369,6 +369,8 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;
   justify-content:center;padding:24px;z-index:70;opacity:0;pointer-events:none;transition:opacity .18s}
 .overlay.show{opacity:1;pointer-events:auto}
+/* 说明弹窗叠在配置弹窗之上 */
+#infoOverlay{z-index:80}
 .alert{width:270px;max-width:100%;background:var(--surface);border-radius:14px;overflow:hidden;
   /* 矮视口（手机横屏 / 笔记本 200% 缩放）下弹窗会比视口高，overflow:hidden 会把
      底部连同按钮一起裁掉；这里限高且允许内部滚动，保证内容永远可达。 */
@@ -715,6 +717,11 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 /* 通用输入弹窗（P20：改找回邮箱） */
 .field{padding:0 16px 14px}
 .field label{display:block;font-size:12px;line-height:16px;color:var(--label-3);margin-bottom:6px}
+/* 字段标签后的说明问号（与 ghead 的 ghelp 同款：单色 currentColor、可点） */
+.field .lbl{display:flex;align-items:center;gap:5px}
+.field .ghelp{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+  border:0;background:transparent;color:var(--label-3);cursor:pointer;padding:0;vertical-align:middle}
+.field .ghelp:hover{color:var(--accent)}
 .field input{width:100%;height:40px;padding:0 11px;font-size:15px;font-family:inherit;
   border:1px solid var(--separator);border-radius:9px;background:var(--bg);color:var(--label)}
 .field input:focus{outline:none;border-color:var(--accent)}
@@ -778,6 +785,8 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
   </div>
 <div class="toast" id="toast"></div>
 <div class="overlay" id="overlay"><div class="alert" id="alert"></div></div>
+<!-- 说明弹窗独立层：从别的弹窗里点问号时不复用 #alert，避免清空外层表单 -->
+<div class="overlay" id="infoOverlay"><div class="alert" id="infoAlert"></div></div>
 
 <!-- R1：ECharts 本地化（admin/vendor/），不依赖外网 CDN——服务器断网图也不空白。
      src 用 "admin/vendor/..." 而不是 "vendor/..."：页面 URL 是 /admin（无尾斜杠），
@@ -1008,7 +1017,9 @@ function dialog({title,message,rows=[],warn="",confirmText="好",cancelText="取
    用于分区标题问号——把「一看就知道」之外的补充说明收进弹层，不占列表底部空间。 */
 function infoDialog({title,message="",lines=[]}){
   return new Promise(resolve=>{
-    const ov=document.getElementById("overlay"), box=document.getElementById("alert");
+    // 独立遮罩层：从 SMTP 等弹窗里点问号时，不复用 #alert，
+    // 否则关掉说明会把外层表单连输入内容一起清掉。
+    const ov=document.getElementById("infoOverlay"), box=document.getElementById("infoAlert");
     box.innerHTML=`
       <div class="head"><h2>${esc(title)}</h2>${message?`<div class="msg">${esc(message)}</div>`:""}</div>
       ${lines.length?`<div class="rows">${lines.map(x=>`<div class="arow" style="display:block;text-align:left">${esc(x)}</div>`).join("")}</div>`:""}
@@ -1060,27 +1071,31 @@ function smtpDialog(cfg){
   return new Promise(resolve=>{
     const ov=document.getElementById("overlay");
     const box=document.getElementById("alert");
-    const f=(id,label,val,ph,type,extra)=>`<div class="field">
-      <label for="${id}">${esc(label)}</label>
+    // 字段标签：带问号的在右侧挂小图标，点开统一风格说明框
+    const label=(forId,text,help)=>help
+      ? `<label for="${forId}"><span class="lbl">${esc(text)}`
+        + `<button type="button" class="ghelp" data-help="${esc(help)}" aria-label="说明">${SVG_HELP}</button></span></label>`
+      : `<label for="${forId}">${esc(text)}</label>`;
+    const f=(id,text,val,ph,type,help,hint)=>`<div class="field">
+      ${label(id,text,help)}
       <input id="${id}" type="${type||"text"}" value="${esc(val||"")}"
-        placeholder="${esc(ph||"")}" autocapitalize="off" spellcheck="false" ${extra||""}>
-      ${extra==="password"?"":(id==="smtpPass"?'<div class="hintline">留空 = 保留已保存的授权码</div>':"")}
+        placeholder="${esc(ph||"")}" autocapitalize="off" spellcheck="false">
+      ${hint?`<div class="hintline">${esc(hint)}</div>`:""}
       </div>`;
+    const hasPass=!!cfg.password_set;
     box.classList.add("wide");
     box.innerHTML=`
-      <div class="head"><h2>SMTP 发信配置</h2>
-        <div class="msg">配置后可用于找回邮件、测试邮件与提醒。留空字段沿用服务器环境变量。</div></div>
-      <div style="max-height:52vh;overflow:auto">
-        ${f("smtpHost","SMTP 主机",cfg.host,"smtp.qq.com")}
-        ${f("smtpPort","端口",cfg.port||465,"465", "number")}
-        ${f("smtpUser","发信账号",cfg.user,"you@example.com")}
-        ${f("smtpFrom","发件显示地址",cfg.from,"留空同发信账号")}
-        ${f("smtpPass","授权码（密码）","","留空则不修改","password")}
-        <div class="field"><label>加密方式</label>
+      <div class="head"><h2>发件邮箱</h2></div>
+      <div class="scroll-list" style="max-height:min(52vh,420px)">
+        ${f("smtpHost","SMTP 主机",cfg.host,"smtp.qq.com","text","smtpHost")}
+        ${f("smtpPort","端口",cfg.port||465,"465","number","smtpPort")}
+        ${f("smtpUser","发信邮箱地址",cfg.user,"you@example.com","text","smtpUser")}
+        ${f("smtpFrom","发件显示地址",cfg.from,"留空同发信邮箱地址","text","smtpFrom")}
+        ${f("smtpPass","授权码","","","password","smtpPass",hasPass?"留空保留已保存的授权码":"")}
+        <div class="field"><label><span class="lbl">加密方式</span></label>
           <div style="display:flex;gap:8px;align-items:center">
             <label style="display:flex;gap:6px;align-items:center;margin:0"><input id="smtpSsl" type="checkbox" ${cfg.ssl?"checked":""} style="width:auto;height:auto"> SSL / TLS</label>
           </div>
-          <div class="hintline">465 端口勾选；587 端口不勾选（STARTTLS）</div>
         </div>
       </div>
       <div class="acts">
@@ -1089,6 +1104,17 @@ function smtpDialog(cfg){
       </div>`;
     const close=val=>{ ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML=""; resolve(val); };
     box.querySelector('[data-act="cancel"]').onclick=()=>close(null);
+    // 问号说明：统一走 infoDialog，不引入原生弹窗
+    const HELP={
+      smtpHost:"发信邮件服务器的 SMTP 地址。示例 smtp.qq.com 是 QQ 邮箱，其他邮箱填各自服务商提供的地址。",
+      smtpPort:"SMTP 端口。QQ 邮箱用 465（配合下面的 SSL / TLS）；587 则不勾 SSL，改用 STARTTLS。以邮箱服务商说明为准。",
+      smtpUser:"用来发信的邮箱地址，例如 you@qq.com。",
+      smtpFrom:"收件人看到的发件地址。留空则与上面的发信邮箱地址相同。",
+      smtpPass:"这里填邮箱的授权码，不是邮箱登录密码。\n\n以 QQ 邮箱为例：网页版登录 mail.qq.com → 设置 → 账号 → 开启 POP3/SMTP 服务 → 生成授权码，把得到的字符串填到这里。\n\n其他邮箱请在各自网页版的 SMTP / IMAP 设置里生成对应的应用专用密码。",
+    };
+    box.querySelectorAll("[data-help]").forEach(b=>b.onclick=()=>{
+      infoDialog({title:"发件邮箱 · 说明",message:HELP[b.dataset.help]||""});
+    });
     box.querySelector('[data-act="ok"]').onclick=()=>close({
       smtp_host:document.getElementById("smtpHost").value.trim(),
       smtp_port:document.getElementById("smtpPort").value.trim(),
@@ -2061,17 +2087,15 @@ function accountRow(x){
       // 小字不再重复账号名（标题已经显示了）——之前是「已授权 · <掩码手机号>」，
       // 同一行出现两次名字，把真正有用的信息挤到右边去了。
       ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
-      : (x.auth_status==="ok"?"余额已读取":"状态未知"));
+      : (x.balance!=null ? "余额已读取" : "余额暂不可用"));
   if(routeNote) sub = sub ? `${sub} · ${routeNote}` : routeNote;
   // 续期失败 / 凭据过期 / 读不到账单（余额未知）→ 红色「重新授权」。
   // 数据由后端 /accounts 给出：renew.needs_reauth 是续期告警口径；
   // balance==null 说明 token 读不到账单（可能已失效），同样要能一键重新扫码。
   const rn=x.renew||{};
-  const noBalance = !isQ && x.balance==null;
-  const needsReauth = !!rn.needs_reauth || noBalance;
+  const needsReauth = !!rn.needs_reauth;
   const reauthHint = rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权"
-    : (rn.days_left!=null && rn.days_left<=0) ? "凭据已过期 · 需重新授权"
-    : noBalance ? "读不到账单 · 需重新授权" : "";
+    : (rn.days_left!=null && rn.days_left<=0) ? "凭据已过期 · 需重新授权" : "";
   const right = x.balance!=null
     ? `<span class="bal">${creditText(x.balance)}<i>积分</i></span>`
     : pill("余额未知","warn");
@@ -2788,15 +2812,14 @@ function renderSecurity(d){
     <div class="rsub">${em.value?esc(em.masked):"还没设置 —— 点这里填一个"}</div></div>
     <div class="rright">${pill(em.value?"修改":"设置",em.value?"ok":"warn")}</div></div>`;
   h+=`<div class="row tap" id="smtpEdit"><div class="rmain"><div class="rtitle">发件邮箱</div>
-    <div class="rsub wrap">${ml.configured
+    <div class="rsub">${ml.configured
       ? esc(ml.from||ml.user||"还没填发件地址")
-      : "还没配置 —— 点这里填写"}</div></div>
-    <div class="rright">${pill(ml.configured?"已配置":"未配置",ml.configured?"ok":"err")}</div></div>`;
+      : "还没设置 —— 点这里填一个"}</div></div>
+    <div class="rright">${pill(ml.configured?"已配置":"设置",ml.configured?"ok":"warn")}</div></div>`;
   h+=`<div class="row tap" id="emailTest"><div class="rmain"><div class="rtitle">发一封测试邮件</div>
     <div class="rsub">${em.ready ? "" : "先填邮箱并配置 SMTP"}</div></div>
     <div class="rright"><span class="mono">→</span></div></div>`;
-  h+=`<div class="row tap" id="signinRun"><div class="rmain"><div class="rtitle">跑一轮签到并发日报</div>
-    <div class="rsub wrap">走网关定时任务那套：签到 + 积分核对 + 发签到日报卡片（约 10~60 秒）</div></div>
+  h+=`<div class="row tap" id="signinRun"><div class="rmain"><div class="rtitle">跑一轮签到并发日报</div></div>
     <div class="rright"><span class="mono">→</span></div></div>`;
   h+='</div></div>';
 

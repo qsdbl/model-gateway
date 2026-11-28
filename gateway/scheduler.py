@@ -111,7 +111,20 @@ def _candidate_pool(est_tokens: int = 0) -> tuple[list[Candidate], list[dict[str
             continue
         billing, meta = _account_snapshot(label)
         if not billing:
-            rejected.append({"account": label, "model": "*", "reason": "读不到账单（凭据可能过期）"})
+            # R2.44：401 与其他失败分开写。以前一律「读不到账单（凭据可能过期）」，
+            # 用户被告知去点「重新授权」——但同名账号积分用完 / 临时 429 时根本
+            # 不该重新授权，反过来说 401 时又没人明确告诉他要扫码。
+            from .app import billing_error_is_auth
+            if billing_error_is_auth(label):
+                rejected.append({
+                    "account": label, "model": "*",
+                    "reason": "凭据已失效（账单 401），需重新扫码授权",
+                })
+            else:
+                rejected.append({
+                    "account": label, "model": "*",
+                    "reason": "读不到账单（上游暂时失败，稍后自动重试）",
+                })
             continue
         balance = billing.get("total")
         no_balance = balance is not None and float(balance) <= 0
@@ -234,6 +247,63 @@ def _is_free_pool_by_name(model_name: str | None) -> bool:
     from .freepool import is_official_free
 
     return is_official_free(model_name)
+
+
+def _summarize_rejected(rejected: list[dict[str, str]]) -> str:
+    """R2.44：把剔除原因压成一行「账号 原因；账号 原因」。
+
+    账号级（model="*"）优先——它们才是「整个号不能用」的根因；
+    模型级的（能力不符/被禁用）只在没有账号级原因时才拿出来。
+    同一账号多模型只留第一条，最多 3 条。
+    """
+    account_level: list[str] = []
+    model_level: list[str] = []
+    seen: set[str] = set()
+    for r in rejected or []:
+        acc = str(r.get("account") or "?")
+        if acc in seen:
+            continue
+        reason = str(r.get("reason") or "").strip()
+        if not reason:
+            continue
+        seen.add(acc)
+        text = f"{acc} {reason}"
+        if r.get("model") == "*":
+            account_level.append(text)
+        else:
+            model_level.append(text)
+    picked = (account_level or model_level)[:3]
+    return "；".join(picked)
+
+
+def _locked_unavailable_reason(locked_acc: str, rejected: list[dict[str, str]]) -> str:
+    """R2.44：把「锁定账号为什么不可用」翻译成人话。
+
+    只看这个账号自己的被剔除记录（别的账号的原因和它无关），按严重程度取一条：
+    凭据失效 > 账号停用 > 余额 0（+冷却）> 冷却中 > 未知。
+    以前统一写成「读不到账单/已停用，请重新授权」，把「积分用完」「429 冷却」
+    全指向了扫码，用户当然觉得系统在瞎报。
+    """
+    mine = [r for r in rejected if r.get("account") == locked_acc]
+    if not mine:
+        return "账号不在网关账号列表里（凭据文件可能被删了）"
+    reasons = [str(r.get("reason") or "") for r in mine]
+    joined = " | ".join(reasons)
+    if "停用" in joined:
+        return "账号已在后台停用"
+    if "401" in joined or "凭据" in joined:
+        return "凭据已失效（上游 401），需要重新扫码授权"
+    no_balance = "余额为 0" in joined
+    cooldown = next((s for s in reasons if "冷却中" in s), "")
+    if no_balance and cooldown:
+        until = cooldown.split("冷却中", 1)[-1].strip()
+        return f"积分已用完（余额 0），付费模型不能用；免费模型额度也耗尽，{until} 才恢复"
+    if no_balance:
+        return "积分已用完（余额 0），付费模型不能用（免费模型可能仍在冷却）"
+    if cooldown:
+        return f"免费模型额度用完{cooldown.split('冷却中', 1)[-1]}，付费模型未启用"
+    return "、".join(dict.fromkeys(reasons))[:120] or "没有可用模型"
+
 
 
 def free_fallback_summary(rejected: list[dict[str, str]]) -> list[str]:
@@ -378,6 +448,17 @@ def build_plan(
                                 "reason": "已锁定其他账号",
                             })
                     pool = kept_acc
+                    #
+                    # R2.44：原因必须说准。以前一律说「读不到账单/已停用，请重新授权」，
+                    # 实际最常见的是「积分用完（余额 0）」和「免费模型 429 冷却中」——
+                    # 这两种跟授权一点关系都没有，让用户去扫码是纯粹的误导。
+                    why = _locked_unavailable_reason(locked_acc, rejected)
+                    if "401" in why or "凭据" in why:
+                        tail = "请到账号页点「重新授权」重新扫码，或点「恢复自动调度」用其他账号。"
+                    elif "停用" in why:
+                        tail = "请到账号页启用它，或点「恢复自动调度」用其他账号。"
+                    else:
+                        tail = "点「恢复自动调度」可改用其他账号；积分/免费额度恢复后自动可用。"
                     notes.append("手动账号：" + locked_acc)
                 else:
                     # R2.43：锁定账号不在候选池 → 直接不服务，不静默回退到别的账号。
@@ -388,8 +469,7 @@ def build_plan(
                         })
                     return Plan(
                         candidates=[], rejected=rejected,
-                        reason=f"已锁定的账号 {locked_acc} 当前不可用（读不到账单/已停用）。"
-                               "请到账号页点「重新授权」恢复，或点「恢复自动调度」。",
+                        reason=f"已锁定的账号 {locked_acc} 当前不可用：{why}。{tail}",
                     )
     except Exception:
         pass
@@ -420,8 +500,13 @@ def build_plan(
         capable.append(c)
 
     if not capable:
+        # R2.44：把「为什么一个候选都没有」直接写进 reason。
+        # 以前只说「账号、模型能力或余额都被过滤掉了」，用户只能看到一句正确的废话，
+        # 实际原因是「153/173/134 凭据 401、176 余额 0、免费模型冷却中」。
+        detail = _summarize_rejected(rejected)
         return Plan(candidates=[], rejected=rejected,
-                    reason="没有可用候选（账号、模型能力或余额都被过滤掉了）")
+                    reason=("没有可用候选（账号、模型能力或余额都被过滤掉了）"
+                            + (f"：{detail}" if detail else "")))
 
     # ---- 手动指定模型（P40）：**置顶优先**，不是独占 ----
     #
@@ -549,6 +634,24 @@ def note_used(candidate: Candidate) -> None:
         pass
 
 
+def preview_plan(est_tokens: int = 200, mode: str = "low") -> Plan:
+    """当前调度的完整计划（含 reason / rejected），不发请求、不改状态。
+
+    R2.44：`preview_candidate()` 只给 best，页面拿不到「为什么没有 best」，
+    于是没有候选时静默退回默认模型，把 hy4flash-free 显示成「使用中」——
+    实际一个候选都没有。后台要用 reason 显示真实状态，所以把 Plan 透出来。
+    """
+    try:
+        from .app import router
+
+        cfg = router.load_config()
+        return build_plan(est_tokens=est_tokens,
+                          manual_model=cfg.get("manual_model") or None,
+                          mode=mode)
+    except Exception:
+        return Plan()
+
+
 def preview_candidate(est_tokens: int = 200, mode: str = "low"):
     """当前调度器**会选**的候选对象（含账号），不发请求、不改状态。
 
@@ -558,16 +661,7 @@ def preview_candidate(est_tokens: int = 200, mode: str = "low"):
 
     R1：mode=low/high 分别预览两种模式的当前选择（后台要分别展示）。
     """
-    try:
-        from .app import router
-
-        cfg = router.load_config()
-        plan = build_plan(est_tokens=est_tokens,
-                          manual_model=cfg.get("manual_model") or None,
-                          mode=mode)
-        return plan.best
-    except Exception:
-        return None
+    return preview_plan(est_tokens=est_tokens, mode=mode).best
 
 
 def preview_model(est_tokens: int = 200) -> str | None:

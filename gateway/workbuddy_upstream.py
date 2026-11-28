@@ -470,6 +470,11 @@ def fetch_billing(token: str | None = None, uid: str | None = None) -> dict[str,
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # R2.44：把 HTTP 状态码带出来。以前只留类名（`HTTPError`），上层分不清
+        # 「401 = 凭据已被上游作废，必须重新扫码」和「429/5xx = 暂时读不到」，
+        # 于是一律显示「读不到账单」，用户被指引去点「重新授权」或反过来被判成误报。
+        raise UpstreamError(f"balance fetch failed: HTTP {e.code}")
     except Exception as e:
         raise UpstreamError(f"balance fetch failed: {type(e).__name__}")
     payload = data.get("data") or {}

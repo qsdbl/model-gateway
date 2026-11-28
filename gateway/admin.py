@@ -103,6 +103,30 @@ def _active_preview():
         return None
 
 
+def _preview_blocked() -> str | None:
+    """R2.44：没有可用候选时，返回调度器的真实原因；有候选返回 None。
+
+    用户报告的 bug：账号 176 锁死且积分用完、免费模型 429 冷却，模型页却依然
+    显示「当前使用 Hy4 flash（免费）」。原因是 preview 拿不到候选时，
+    `_active_upstream()` 静默回退成 `effective_model()`（默认免费模型），
+    页面就把「默认值」当成「正在用」。这里把「为什么没有候选」交给前端显式展示。
+    """
+    if settings.upstream != "workbuddy":
+        return None
+    # 先看 preview 有没有候选（多數情况就是有，不用再算一遍计划）。
+    # 用 _active_preview() 而不是重新算 plan：测试与调用方都把 preview 当唯一口径。
+    if _active_preview() is not None:
+        return None
+    try:
+        from . import scheduler as _SCHED
+        plan = _SCHED.preview_plan(est_tokens=200, mode="low")
+    except Exception:
+        return None
+    if plan.candidates:
+        return None
+    return plan.reason or "没有可用候选"
+
+
 def _attach_preview_price(items: list[dict], preview=None) -> list[dict]:
     """把预览候选的实测价格（est_cost / free_upto）挂到对应模型项上。
 
@@ -232,6 +256,29 @@ async def api_accounts(request: Request) -> dict:
     return {"items": items, "platforms": _platforms(items)}
 
 
+def _billing_error(label: str) -> str | None:
+    """该 WorkBuddy 账号上次读账单失败的原因（人类可读），成功则 None。R2.44。"""
+    try:
+        from .app import account_billing_error
+        err = account_billing_error(label)
+    except Exception:
+        return None
+    if not err:
+        return None
+    if "HTTP 401" in err or "HTTP 403" in err:
+        return "凭据已失效（上游 401）：上游不再接受这个登录态，需要重新扫码授权"
+    return f"账单读取失败（{err}）：暂时读不到，稍后会自动重试"
+
+
+def _billing_error_is_auth(label: str) -> bool:
+    """读账单的失败是不是「凭据被作废」（401/403）。"""
+    try:
+        from .app import billing_error_is_auth
+        return bool(billing_error_is_auth(label))
+    except Exception:
+        return False
+
+
 def _accounts_rich() -> list[dict]:
     """真实账号列表：凭据文件为准，DB 补充启用状态，账单补充余额与消耗。"""
     from . import modelstate
@@ -286,7 +333,12 @@ def _accounts_rich() -> list[dict]:
             "label": label,
             "platform": "workbuddy",
             "platform_label": platform_label("workbuddy"),
-            "auth_status": "ok" if billing else (row.get("auth_status") or "unknown"),
+            # R2.44：账单 401 = 上游已作废这个 token（实测连聊天接口也 401），
+            # 这才叫「凭据失效」。以前沿用 DB 里那条陈旧的 ok，页面显示「授权正常」，
+            # 用户只能从 503 文案里猜。
+            "auth_status": ("ok" if billing
+                            else ("expired" if _billing_error_is_auth(label)
+                                  else (row.get("auth_status") or "unknown"))),
             "balance": (billing or {}).get("total"),
             "balance_unit": "credits_workbuddy",
             "balance_checked_at": (billing or {}).get("checked_at"),
@@ -300,8 +352,14 @@ def _accounts_rich() -> list[dict]:
             },
             "credits": credits,
             "usage": u,
-            "active": False,
+            # R2.44：前端锁定卡/✓/「锁定此账号」按钮读的是 `active`，后端以前
+            # 只写了 `selected`（恒 False 的 active 从来不为真）——
+            # 于是「已锁定到 X + 恢复自动调度」整块 UI 永不出现，用户锁完无路可退。
+            # 两个字段都保留：`selected` 是历史字段（老前端/测试在用），`active` 补上同值。
+            "active": bool(active and active == label),
             "selected": bool(active and active == label),
+            # 读账单失败的真实原因（401=凭据失效，其余=暂时读不到）
+            "auth_error": _billing_error(label),
             # P33：同步来源与时间（账号是从哪个签到系统复制过来的）
             "source": row.get("source"),
             "last_sync_at": row.get("last_sync_at"),
@@ -809,8 +867,17 @@ async def api_models(request: Request) -> dict:
             recent = _recent_schedule_view(store.recent_schedule(window_minutes=5))
         except Exception:
             recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
-        return {"items": _attach_preview_price(_live_models(), _active_preview()),
+        blocked = _preview_blocked()
+        # _live_models() 返回的是缓存里的同一个 list，改元素会污染缓存 → 先拷贝
+        items = [dict(it) for it in _live_models()]
+        if blocked:
+            # 没有可用候选时不能有任何一项标「使用中」——那个「使用中」只是默认模型的回声
+            for it in items:
+                it["active"] = False
+        items = _attach_preview_price(items, _active_preview())
+        return {"items": items,
                 "active_account": _active_upstream_account(),
+                "blocked": blocked,
                 "recent_schedule": recent}
     import time
     # P48：这里原来用 effective_model()（P15 手动锁/默认值），和接入页的
@@ -861,6 +928,7 @@ async def api_models(request: Request) -> dict:
     except Exception:
         recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
     return {"items": items, "active_account": _active_upstream_account(),
+            "blocked": _preview_blocked(),
             "recent_schedule": recent}
 
 
@@ -883,19 +951,30 @@ async def api_state(request: Request) -> dict:
     account = None
     try:
         cands = get_candidates({})
-        if cands:
-            # P49：**账号**口径也统一到调度器。原来这里按「余额最多」挑一个
-            # 账号展示，而调度是按「本次预计扣费 + 轮转摊平」挑的，两者经常
-            # 不是同一个账号 —— 顶栏看着在用 A，实际请求打的是 B。
-            act = _active_upstream()
-            best = next((c for c in cands if c.account_label == act.get("account")), None)
-            if best is None:  # 调度预览不可用时的兜底
-                best = max(cands, key=lambda c: c.balance if c.balance is not None else -1)
+        act = _active_upstream()
+        # R2.44：**删掉「余额最多」兜底**。调度器没有选中任何账号（锁定账号
+        # 不可用、全部账号被剔除）时，旧代码会挑一个余额最多的候选当作
+        # 「当前账号」显示——那既不是调度结果，也永远不会被真正使用，
+        # 用户看到「已锁定到 134」正是这类幽灵账号（余额 None 全为 -1，
+        # max() 直接返回列表第一个）。没有选中就显示没有。
+        if act.get("account"):
             account = {
-                "label": best.account_label,
-                "platform": best.platform,
-                "platform_label": platform_label(best.platform),
+                "label": act.get("account"),
+                "platform": act.get("platform"),
+                "platform_label": act.get("platform_label"),
                 "selected": bool(snap.get("active_account")),
+                "count": len(cands),
+            }
+        elif snap.get("active_account"):
+            # 手动锁定了账号、但调度预览算不出候选（目录/账单异常）：
+            # 锁定这件事本身是真的，如实显示这个账号，不要显示别的号。
+            lb = str(snap.get("active_account"))
+            hit = next((c for c in cands if c.account_label == lb), None)
+            account = {
+                "label": lb,
+                "platform": (hit.platform if hit else "workbuddy"),
+                "platform_label": platform_label(hit.platform if hit else "workbuddy"),
+                "selected": True,
                 "count": len(cands),
             }
     except Exception:
@@ -911,6 +990,9 @@ async def api_state(request: Request) -> dict:
         "updated_at": snap.get("updated_at"),
         "public_model": settings.public_model,
         "account": account,
+        # R2.44：没有可用候选时的真实原因（顶栏据此显示「不可用」，而不是
+        # 拿默认模型名假装正在服务）
+        "blocked": _preview_blocked(),
         # P49：后台线程状态一并透出。签到 / 凭据续期全靠这个线程，
         # 它要是没起来，页面却什么都不显示，用户只会以为「今天没邮件」。
         "background": _background_status(),
@@ -1631,6 +1713,7 @@ def _active_upstream() -> dict[str, Any]:
     """
     out: dict[str, Any] = {
         "model": None, "account": None, "platform": None, "platform_label": None,
+        "blocked": None,
     }
     if settings.upstream != "workbuddy":
         # mock 模式的手动锁走 modelstate（app.build_plan 也是这么读的），
@@ -1662,6 +1745,9 @@ def _active_upstream() -> dict[str, Any]:
         out["model"] = effective_model()
     except Exception:
         out["model"] = settings.public_model
+    # R2.44：走到这里说明调度器一个候选都给不出来。模型名只是「默认值」，
+    # 不代表在服务——一并带上原因，页面据此显式报「不可用」。
+    out["blocked"] = _preview_blocked()
     return out
 
 

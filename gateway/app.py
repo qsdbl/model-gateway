@@ -227,6 +227,10 @@ def _upstream_error_types() -> tuple:
 _candidate_provider = None
 # 真实 WorkBuddy 余额缓存（P10/P19）：label -> (monotonic, billing|None, meta|None)
 _wb_balance_cache: dict[str, tuple[float, Any, Any]] = {}
+# R2.44：上一次读账单的失败原因（label -> reason，成功则删掉）。
+# 401 与 429/5xx 必须分开：401 是凭据被上游作废，只能重新扫码；
+# 其余是暂时读不到，重试即可。调度器和账号页都读它来给准确文案。
+_wb_balance_error: dict[str, str] = {}
 
 
 def set_candidate_provider(fn) -> None:
@@ -245,13 +249,32 @@ def _account_snapshot(label: str):
     ctx = use_account(label)
     try:
         billing = fetch_billing()
-    except Exception:
+        _wb_balance_error.pop(label, None)
+    except Exception as exc:  # noqa: BLE001
         billing = None
+        _wb_balance_error[label] = str(exc)[:200]
     finally:
         reset_account(ctx)
     meta = account_meta(label)
     _wb_balance_cache[label] = (now, billing, meta)
     return billing, meta
+
+
+def account_billing_error(label: str) -> str | None:
+    """上次读该账号账单失败的原因（成功返回 None）。R2.44。
+
+    只在上一次 `_account_snapshot()` 真的失败过（且没有被后续成功清掉）时有值。
+    """
+    return _wb_balance_error.get(label)
+
+
+def billing_error_is_auth(label: str) -> bool:
+    """这个失败是不是「凭据被上游作废」（401）——只有这种才该让用户重新扫码。
+
+    429/超时/5xx 属于暂时读不到，重试就好；把它也标成「重新授权」是误报。
+    """
+    err = (_wb_balance_error.get(label) or "")
+    return "HTTP 401" in err or "HTTP 403" in err
 
 
 def get_candidates(payload: dict[str, Any]) -> list[Candidate]:

@@ -69,6 +69,9 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 .chip b{font-weight:600}
 .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto}
 .chip.paid .dot{background:var(--warn)}
+/* R2.44：无可用候选（全部账号被剔除）时顶栏告警色，跟 paid 的橙色区分开 */
+.chip.blocked{border-color:var(--err);color:var(--err)}
+.chip.blocked .dot{background:var(--err)}
 
 .seg{display:flex;background:var(--fill);border-radius:10px;padding:2px;margin-bottom:16px;
   overflow-x:auto;scrollbar-width:none}
@@ -1286,7 +1289,7 @@ async function load(p){
   let d;
   try{ d=await getJSON(p==="routes"?("schedule?tokens="+SCH_TOKENS):p); }
   catch(e){ if(e.auth) return; body.innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>'; return; }
-  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null);
+  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null, d.blocked||null);
   else if(p==="accounts") renderAccounts(d);
   else if(p==="requests"){
     // P48：切换历史单独取（折叠后的段），失败不影响请求列表本身
@@ -1302,7 +1305,7 @@ async function load(p){
 }
 
 /* ==================== 模型 ==================== */
-const M={q:"",scope:"rec",open:new Set(),items:[],active:null,activeAcc:null};
+const M={q:"",scope:"rec",open:new Set(),items:[],active:null,activeAcc:null,blocked:null};
 
 function groupOf(x){
   if(x.kind&&x.kind!=="chat") return "gen";
@@ -1333,13 +1336,16 @@ function defaultOpen(scope){
   return ["free","low"];
 }
 
-function renderModels(items,activeAcc,recentSchedule){
+function renderModels(items,activeAcc,recentSchedule,blocked){
   const body=document.getElementById("body");
   M.items=items||[];
   /* 账号信息要跨函数用：卡片是在 paintModels() 里画的，不是 renderModels。
      之前把它当参数往下传，paintModels 拿不到 → ReferenceError → 整张卡片
      连同整个模型列表都不渲染。放进全局状态才安全。 */
   M.activeAcc=activeAcc||null;
+  // R2.44：没有可用候选时的真实原因（调度器 reason）。有值时页面顶部显示
+  // 「当前没有可用账号」，不再把默认模型当成「正在使用」。
+  M.blocked=blocked||null;
   // R2.39b：最近窗口的真实调度聚合（与用量日志同口径）
   M.recentSchedule=recentSchedule||M.recentSchedule||null;
   if(!M.items.length){ body.innerHTML='<div class="empty">暂无模型数据</div>'; return; }
@@ -1471,6 +1477,17 @@ function paintModels(){
       `${platBadge(s.platform)} ${esc(dispLabel(s.account_label))}/${esc(s.model_name)}`).join(" → ")}</div>`:"";
     h+=`<div class="group"><div class="ghead">最近 ${win} 分钟 · 实际调度</div><div class="card">
       ${rowsHtml}${segHtml}
+    </div></div>`;
+  } else if(M.blocked){
+    /* R2.44：调度器一个候选都给不出来。以前这里会画「当前选中 · Hy4 flash 免费」，
+       因为 preview 为空时后端回退成默认模型 —— 用户看到「在用免费模型」，
+       实际每个请求都 503。现在如实报错，并给出下一步该点哪里。 */
+    h+=`<div class="group"><div class="ghead">当前不可用</div><div class="card">
+      <div class="row"><div class="rmain">
+        <div class="rtitle">没有可用账号<span class="pill err">全部剔除</span></div>
+        <div class="rsub">${esc(M.blocked)}</div>
+        <div class="rsub" style="margin-top:4px;color:var(--label-3)">去「账号」页重新扫码授权，或点「恢复自动调度」换其他账号。</div>
+      </div></div>
     </div></div>`;
   } else if(M.active){
     // 无最近请求时才退回调度预览（口径与调度器一致，只认真免费池）
@@ -2143,10 +2160,18 @@ function accountRow(x){
   // 续期失败 / 凭据过期 / 读不到账单（余额未知）→ 红色「重新授权」。
   // 数据由后端 /accounts 给出：renew.needs_reauth 是续期告警口径；
   // balance==null 说明 token 读不到账单（可能已失效），同样要能一键重新扫码。
+  // R2.44：但「上游明确回 401」是另一回事——实测这种 token 连聊天接口一起 401，
+  // 只能重新扫码。后端把 401 单独走 auth_error / auth_status="expired" 传上来，
+  // 这里据此显示红色「重新授权」；429/超时/5xx 仍然只算「余额暂不可用」。
   const rn=x.renew||{};
-  const needsReauth = !!rn.needs_reauth;
-  const reauthHint = rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权"
+  const authDead = x.auth_status==="expired"
+    || /401|凭据已失效/.test(String(x.auth_error||""));
+  const needsReauth = !!rn.needs_reauth || authDead;
+  const reauthHint = authDead ? "凭据已失效（上游 401）· 需重新扫码授权"
+    : rn.fail_streak>=2 ? "凭据续期失败 · 需重新授权"
     : (rn.days_left!=null && rn.days_left<=0) ? "凭据已过期 · 需重新授权" : "";
+  // R2.44：凭据被作废要在行内小字就说清楚；只说「余额暂不可用」用户根本不知道该干嘛。
+  if(authDead) sub = "凭据已失效 · 点右侧「重新授权」";
   const right = x.balance!=null
     ? `<span class="bal">${creditText(x.balance)}<i>积分</i></span>`
     : pill("余额未知","warn");
@@ -4338,8 +4363,13 @@ async function refreshChip(){
   try{
     const d=await getJSON("state");
     const chip=document.getElementById("chip");
-    document.getElementById("chipModel").textContent=d.active_model||"—";
-    chip.classList.toggle("paid",!!d.manual);
+    // R2.44：没有可用候选时顶栏直说「不可用」——以前显示默认模型名（low/Hy4 flash），
+    // 看着像在用，其实每个请求都 503。原因放 title，鼠标停留能看全。
+    document.getElementById("chipModel").textContent=d.blocked?"不可用":(d.active_model||"—");
+    chip.classList.toggle("paid",!!d.manual && !d.blocked);
+    chip.classList.toggle("blocked",!!d.blocked);
+    if(d.blocked) chip.title="当前没有可用账号："+d.blocked;
+    else chip.title="切换模型";
   }catch{ document.getElementById("chipModel").textContent="—"; }
 }
 
@@ -4395,6 +4425,7 @@ async function liveRefresh(){
       try{ d=await getJSON("models"); }catch{ d=null; }
       if(d){
         M.items=d.items||[]; M.activeAcc=d.active_account||null;
+        M.blocked=d.blocked||null;
         M.recentSchedule=d.recent_schedule||null;
         M.active=M.items.find(x=>x.active)||null;
         paintModels();

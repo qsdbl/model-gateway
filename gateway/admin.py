@@ -111,11 +111,15 @@ def _attach_preview_price(items: list[dict], preview=None) -> list[dict]:
     """
     if preview is None:
         return items
+    from .freepool import is_official_free
     for it in items:
         if it.get("model_name") == preview.model_name:
             it["est_cost"] = preview.est_cost
             it["free_upto"] = preview.free_upto or 0
             it["always_free"] = bool(getattr(preview, "measured_free", False))
+            # R2.39：前端「免费」标签只认官方免费池身份，不用 est_cost==0 推断。
+            # 付费模型短请求免扣（est_cost=0）≠ 免费池成员，这是两个概念。
+            it["is_free_pool"] = bool(is_official_free(preview.model_name))
             break
     return items
 
@@ -913,6 +917,7 @@ def _model_view(est_tokens: int = 200, *, include_qoder: bool = False) -> list[d
     默认 False，避免探针/定价页多出没标定价格的 Qoder 模型。
     """
     from . import costmodel
+    from .freepool import is_official_free
     from .store import store
     from .workbuddy_upstream import catalog
 
@@ -958,6 +963,8 @@ def _model_view(est_tokens: int = 200, *, include_qoder: bool = False) -> list[d
             "measured_credit": curve.measured_min_credit if curve else None,
             "measured_at": None,
             "free": mid in free_models,
+            # R2.39：官方免费池身份（只认 freepool 真源），与「本次免扣」分开。
+            "is_free_pool": is_official_free(mid),
             "free_upto": curve.free_upto if curve else 0,
             "always_free": bool(curve and curve.always_free),
             "flat_credit": curve.flat_credit if curve else None,

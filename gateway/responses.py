@@ -376,10 +376,14 @@ async def responses_endpoint(request: Request) -> Any:
     if _mode == "low" and chosen.est_cost is not None and chosen.est_cost > 0:
         try:
             from . import notify
+            from .scheduler import free_fallback_summary
             notify.note_paid_start(
                 model=chosen.model_name, account=chosen.account_label,
                 cost=chosen.est_cost, balance=chosen.balance,
                 daily_total=store.credit_today(),
+                price_factor=chosen.price_factor,
+                choose_reason=plan.reason,
+                free_alternatives=free_fallback_summary(plan.rejected),
             )
         except Exception:
             pass

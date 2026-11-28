@@ -579,15 +579,19 @@ async def chat_completions(request: Request) -> Any:
     # R2.22：路由一确定就把实际模型/账号回填到 pending 记录，
     # 让「进行中」的明细行也显示真实模型名而不是 unknown（不必等 finalize）。
     store.attach_route(req_id, **route_fields)
-    # R1 提醒（low）：本次所有免费模型都不可用、选中了收费模型 → 当天首封提醒。
+    # R1 提醒（low）：本次选中了付费模型 → 当天首封提醒。
     # 放在路由成功后、上游调用前；notify 内部按天去重，失败不影响请求。
     if current_mode() == "low" and chosen.est_cost is not None and chosen.est_cost > 0:
         try:
             from . import notify
+            from .scheduler import free_fallback_summary
             notify.note_paid_start(
                 model=chosen.model_name, account=chosen.account_label,
                 cost=chosen.est_cost, balance=chosen.balance,
                 daily_total=store.credit_today(),
+                price_factor=chosen.price_factor,
+                choose_reason=plan.reason,
+                free_alternatives=free_fallback_summary(plan.rejected),
             )
         except Exception:
             pass

@@ -1426,16 +1426,20 @@ function paintModels(){
        旧写法依赖 CONFIG.account，而模型页初始化时 CONFIG 还没加载完，
        导致「账号」那一截经常不显示。 */
     const acc=M.activeAcc||(CONFIG&&CONFIG.account?CONFIG.account:null);
-    /* R1.2：优先显示「本次预览的实测价格」（est_cost/free_upto），而不是目录倍率。
-       hunyuan-chat 这类目录未标价、但短请求实测免费的模型，旧逻辑显示「未标价」
-       让人以为在偷偷扣费——实测免费就该写「本次免费」。 */
+    /* R2.39：免费口径按新规矩——只有官方真免费池模型（is_free_pool）才贴「免费」。
+       付费模型短请求免扣（est_cost=0）只是「本次未扣费」，绝不叫免费；
+       也不再显示「≤N token 免费」这种按长度叙事（那是旧口径）。 */
+    const inFreePool=!!a.is_free_pool;
     const activePrice = a.est_cost==null ? priceText(a)
-      : (a.est_cost===0 ? "本次免费" : "本次 "+num(a.est_cost)+" 积分");
-    const freeHint = a.free_upto>0 ? " · ≤"+a.free_upto+" token 免费" : "";
+      : (a.est_cost===0
+          ? (inFreePool?"免费池 · 本次 0 积分":"付费模型 · 本次未扣费")
+          : "付费模型 · 本次 "+num(a.est_cost)+" 积分");
+    const priceCls = (a.est_cost!=null && a.est_cost===0 && inFreePool)?"free":"info";
     h+=`<div class="group"><div class="ghead">当前选中 · 自动调度预览</div><div class="card">
       <div class="row active"><div class="rmain">
-        <div class="rtitle">${esc(a.display_name||a.model_name)}<span class="pill info">${esc(activePrice)}</span></div>
-        <div class="rsub">${esc(a.model_name)} · 对外名 ${esc(a.public_name||"")}${acc?(" · 账号 "+platBadge(acc.platform,dispLabel(acc.label))):""}${freeHint} · 调度预览</div>
+        <div class="rtitle">${esc(a.display_name||a.model_name)}<span class="pill ${priceCls}">${esc(activePrice)}</span></div>
+        <div class="rsub">${esc(a.model_name)} · 对外名 ${esc(a.public_name||"")}${acc?(" · 账号 "+platBadge(acc.platform,dispLabel(acc.label))+" "+esc(dispLabel(acc.label))):""} · 调度预览</div>
+        <div class="rsub" style="margin-top:4px;color:var(--label-3)">这是典型短请求的预览；每次请求会按当时长度重新择优，实际模型见用量汇总。付费模型短请求可能免扣，不代表属于免费池。</div>
       </div><div class="rright"><span class="tick">✓</span></div></div>
     </div></div>`;
   }
@@ -2185,6 +2189,16 @@ function renderAccounts(d){
     return bv-av;
   });
   let h="";
+  // R2.39：账号被手动锁定（点过「切换到此账号」）时，给一个显眼的恢复入口。
+  const locked=ACC.items.find(x=>x.active);
+  if(locked){
+    h+=`<div class="group"><div class="card" style="padding:12px 14px">
+      <div class="row" style="min-height:0">
+        <div class="rmain"><div class="rtitle">已锁定到 ${esc(dispLabel(locked.label))}</div>
+          <div class="rsub">请求只走这一个账号，不再自动轮转。</div></div>
+        <div class="rright"><button type="button" class="btn secondary" id="resetAccountLock">恢复自动调度</button></div>
+      </div></div></div>`;
+  }
   if(plats.length){
     // 平台区块默认收起：只在需要核对各平台账号分布时展开，避免占掉首屏。
     h+=`<div class="group"><div class="ghead">平台
@@ -2238,9 +2252,10 @@ function bindAccountActions(){
     e.stopPropagation();
     const label=btn.dataset.switch;
     const ok=await dialog({
-      title:"切换到这个账号？",
+      title:"锁定到这个账号？",
+      message:"切换后请求只会走这一个账号，不再自动轮转；想恢复自动调度，点账号页顶部的「恢复自动」。",
       rows:[["账号",label]],
-      confirmText:"切换",
+      confirmText:"锁定",
     });
     if(!ok) return;
     try{
@@ -2249,8 +2264,31 @@ function bindAccountActions(){
       await refreshChip();
       ACC.items=ACC.items.map(i=>({...i,active:i.label===label}));
       renderAccounts({items:ACC.items});
+      // 让模型 tab 预览区立刻反映锁定账号，不等 5 秒自动刷新
+      try{
+        const md=await getJSON("models");
+        if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
+          M.active=M.items.find(x=>x.active)||null; paintModels(); }
+      }catch(e){}
     }catch(err){ toast("切换失败："+err.message); }
   }));
+  // R2.39：恢复自动调度（清除账号锁 account=null）
+  const resetLock=document.getElementById("resetAccountLock");
+  if(resetLock) resetLock.addEventListener("click",async e=>{
+    e.stopPropagation();
+    try{
+      await postJSON("account",{account:null});
+      toast("已恢复自动调度");
+      await refreshChip();
+      try{
+        const md=await getJSON("models");
+        if(md){ M.items=md.items||[]; M.activeAcc=md.active_account||null;
+          M.active=M.items.find(x=>x.active)||null; paintModels(); }
+      }catch(e){}
+      ACC.items=ACC.items.map(i=>({...i,active:false}));
+      renderAccounts({items:ACC.items});
+    }catch(err){ toast("恢复失败："+err.message); }
+  });
   const add=document.getElementById("addacc");
   if(add) add.addEventListener("click",()=>importDialog());
   /* ---- Qoder 授权（P44）----
@@ -3486,13 +3524,13 @@ let SCH_TOKENS=200;
 
 function schTgl(label,on,cls){ return `<button class="tgl ${cls||""}" data-sch="${label}" aria-pressed="${on?"true":"false"}">${on?"开启":"关闭"}</button>`; }
 
-/* P41：上游按「请求输入 token」计费，免费只是一段长度区间。
-   所以这里显示的是「跑这个长度的请求要花多少」，不是「这个模型免费吗」。 */
 function schMeta(m){
   const bits=[];
-  if(m.est_cost!=null) bits.push(m.est_cost===0?"本次免费":"本次 "+num(m.est_cost)+" 积分");
-  else bits.push("未标价");
-  if(m.free_upto>0) bits.push("≤"+m.free_upto+" token 免费");
+  const inPool=!!m.is_free_pool;   // R2.39：只认官方真免费池，不用 est_cost==0 推断
+  if(m.est_cost!=null){
+    if(m.est_cost===0) bits.push(inPool?"免费池 · 0 积分":"付费模型 · 本次未扣费");
+    else bits.push("付费模型 · 本次 "+num(m.est_cost)+" 积分");
+  } else bits.push("未标价");
   if(m.flat_credit!=null) bits.push("按次 "+num(m.flat_credit));
   if(m.points) bits.push(m.points+" 个实测点");
   return bits.join(" · ");

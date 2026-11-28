@@ -236,6 +236,28 @@ def _is_free_pool_by_name(model_name: str | None) -> bool:
     return is_official_free(model_name)
 
 
+def free_fallback_summary(rejected: list[dict[str, str]]) -> list[str]:
+    """R2.39：从被剔除项里挑出「真免费池模型为何没用上」，给扣费邮件用。
+
+    只认官方免费池成员（`freepool.is_official_free`），付费模型短请求免扣不算。
+    同一个模型多行只留一条（按账号去重），输出形如
+    `hy4flash-free@某账号：冷却中（到 14:20）`。
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[str] = []
+    for r in rejected or []:
+        mid = r.get("model")
+        if not mid or not _is_free_pool_by_name(mid):
+            continue
+        key = (mid, r.get("account") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        reason = (r.get("reason") or "不可用").strip()
+        out.append(f"{mid}@{r.get('account') or '?'}：{reason}")
+    return out[:6]   # 邮件里别塞太长，最多 6 条
+
+
 def _is_free_pool(c: Candidate) -> bool:
     """免费池身份（R1.5）：只认官方标 free 的模型，不看本次扣费。
 
@@ -335,6 +357,30 @@ def build_plan(
                     })
             pool = kept
             notes.append("high 严格平台：" + "/".join(sorted(enabled_platforms)))
+
+    # R2.39：手动「切换到此账号」锁要对预览生效。
+    # 真实请求走 app.get_candidates() 会读 modelstate.active_account() 把候选
+    # 限制到那一个账号；但预览（_candidate_pool）以前不读，导致切了账号后
+    # 「当前选中 · 自动调度预览」仍显示调度器自己挑的账号，看不到切换效果。
+    # 这里对齐同口径：只 workbuddy 真实模式读锁，mock/测试不受影响。
+    try:
+        from .config import settings as _settings
+        if _settings.upstream == "workbuddy":
+            from . import modelstate
+            locked_acc = modelstate.active_account()
+            if locked_acc:
+                kept_acc = [c for c in pool if c.account_label == locked_acc]
+                if kept_acc:
+                    for c in pool:
+                        if c.account_label != locked_acc:
+                            rejected.append({
+                                "account": c.account_label, "model": c.model_name,
+                                "reason": "手动切换账号后未选中",
+                            })
+                    pool = kept_acc
+                    notes.append("手动账号：" + locked_acc)
+    except Exception:
+        pass
 
     # ---- 能力筛选 ----
     capable: list[Candidate] = []

@@ -85,10 +85,21 @@ def _send(subject: str, text: str, html: str | None = None) -> bool:
 # ---------------- low：开始消耗积分 ----------------
 
 def note_paid_start(*, model: str, account: str, cost: float | None,
-                    balance: float | None, daily_total: float | None = None) -> bool:
+                    balance: float | None, daily_total: float | None = None,
+                    price_factor: float | None = None,
+                    choose_reason: str | None = None,
+                    free_alternatives: list[str] | None = None) -> bool:
     """low 模式本次请求选了付费模型 → 当天首次发一封提醒。
 
     返回是否真的发了邮件。去重标记按天滚动，存 settings 表。
+
+    R2.39（用户诉求）：邮件要说清「这次为什么用了付费模型」——
+    - `price_factor`：目录倍率（付费池身份的证据，不是「免费吗」的判据）；
+    - `choose_reason`：调度器给出的选模原因；
+    - `free_alternatives`：本次真免费模型为什么没用上（429/冷却等）。
+    开头那句「免费模型不可用，已自动切换付费」是旧叙事——按新口径，
+    免费池只认官方真免费模型（hy4flash-free），付费短请求免扣不代表免费，
+    所以改成中性的「本次用了付费模型」，不再暗示「免费池没了」。
     """
     today = date.today().isoformat()
     key = f"{_PREFIX}low_paid_sent_on"
@@ -99,11 +110,22 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     cost_text = f"{float(cost):.2f}" if cost is not None else "未知（价格无观测数据）"
     bal_text = f"{float(balance):.2f}" if balance is not None else "未知"
     total_text = f"{float(daily_total):.2f}" if daily_total is not None else "（今日累计见后台记录页）"
+    factor_text = (
+        f"x{float(price_factor):g}" if price_factor is not None else "目录未标价"
+    )
+    reason_text = (choose_reason or "按本次预计扣费择优").strip()
+    free_text = (
+        "；".join(free_alternatives)
+        if free_alternatives else "本次官方免费模型不可用（限流 / 冷却 / 未标定）"
+    )
     subject = "[网关] low 开始消耗积分"
-    intro = "免费模型不可用，已自动切换到付费模型。"
-    footnote = "当天首次提醒，后续不再单独发信。"
+    intro = "本次调度选中了一个付费模型，开始消耗账号积分。"
+    footnote = "当天首次提醒，后续不再单独发信。付费模型短请求可能免扣，不代表它属于免费池。"
     rows = [
         ("模型", model),
+        ("倍率", factor_text),
+        ("为何选它", reason_text),
+        ("免费模型为何没用上", free_text),
         ("账号", account_disp),
         ("本次扣费", f"{cost_text} 积分"),
         ("当前余额", bal_text),
@@ -112,6 +134,9 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     text = (
         intro + "\n\n"
         + f"模型：{model}\n"
+        + f"倍率：{factor_text}\n"
+        + f"为何选它：{reason_text}\n"
+        + f"免费模型为何没用上：{free_text}\n"
         + f"账号：{account_disp}\n"
         + f"本次扣费：{cost_text} 积分\n"
         + f"当前余额：{bal_text}\n"
@@ -121,7 +146,7 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     # 卡片样式：与登录邮件 / 签到日报逐像素同款（无跳转目标 → 自动省略按钮）
     html = mailer.card_html(
         title="low 开始消耗积分",
-        subtitle=f"{date.today().isoformat()} · 免费模型不可用，已自动降级付费",
+        subtitle=f"{date.today().isoformat()} · 本次用了付费模型，非免费池",
         badge="首次提醒",
         rows=rows,
         cta="", link="",

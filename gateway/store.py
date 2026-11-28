@@ -444,7 +444,8 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def recent_schedule(self, window_minutes: int = 5) -> dict[str, Any]:
+    def recent_schedule(self, window_minutes: int = 5,
+                        public_model: str | None = None) -> dict[str, Any]:
         """R2.39b：最近 N 分钟的**真实调度**聚合（模型 tab 用量口径对齐）。
 
         用户诉求：模型 tab 以前是「典型短请求预览」，用量汇总是历史真实请求，
@@ -455,15 +456,18 @@ class Store:
         - segments：按时间正序的切换段（连续相同 账号×模型 折叠），展示「在谁之间切换」
         """
         cutoff = time.time() - max(1, window_minutes) * 60
+        # R2.51：按对外模型（low/high）过滤——模型页两个 tab 各看自己档位的真实调度。
+        where_pm = " AND public_model = ?" if public_model else ""
+        args = (cutoff, public_model) if public_model else (cutoff,)
         with self._lock:
             rows = self._conn.execute(
                 """SELECT platform, model_name, account_label, created_at, status,
                           price_factor
                    FROM requests
                    WHERE account_label IS NOT NULL AND model_name IS NOT NULL
-                     AND created_at >= ?
+                     AND created_at >= ?""" + where_pm + """
                    ORDER BY id ASC""",
-                (cutoff,),
+                args,
             ).fetchall()
         rows = [dict(r) for r in rows]
         from collections import Counter

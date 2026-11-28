@@ -347,6 +347,20 @@ def get_candidates(payload: dict[str, Any]) -> list[Candidate]:
     )]
 
 
+def _manual_model_for(cfg: dict[str, Any], mode: str) -> str | None:
+    """读某个档位的置顶模型（R2.51）。
+
+    low / high 各自独立；新键 `manual_model_<mode>` 优先。老配置只有全局
+    `manual_model` 时回退到它（两档共享，兼容升级）；一旦写过新键就不再回退。
+    """
+    key = "manual_model_high" if mode == "high" else "manual_model_low"
+    val = cfg.get(key)
+    if val:
+        return val
+    # 该档位没显式配置过 → 回退旧全局键（老配置兼容）
+    return cfg.get("manual_model") or None
+
+
 def build_plan(
     payload: dict[str, Any],
     *,
@@ -387,12 +401,15 @@ def build_plan(
             reason=decision.reason,
         )
     cfg = router.load_config()
-    manual = cfg.get("manual_model") or None
+    _mode = mode or current_mode()
+    # R2.51：low / high 各自独立的置顶模型。新键优先；没写新键时回退旧
+    # manual_model（兼容老配置，避免升级后已置顶的模型失效）。
+    manual = _manual_model_for(cfg, _mode)
     # R1：mode 决定用哪套 profile（low=免费优先自动；high=指定强模型优先级）。
     return SCHED.build_plan(
         need_tools=need_tools, need_image=need_image, need_context=need_context,
         manual_model=manual, est_tokens=est_tokens,
-        mode=mode or current_mode(),
+        mode=_mode,
     )
 
 @asynccontextmanager

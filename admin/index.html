@@ -192,8 +192,9 @@ h1{font-size:22px;line-height:28px;font-weight:700;letter-spacing:.35px}
 /* R2.6：真免费模型用暖橙 FREE 角标，和同名付费模型一眼可分。
    付费方不额外加角标（避免列表噪音），靠「有/无 FREE」区分即可。 */
 .pill.free{color:#B45309;background:rgba(245,158,11,.16)}
-/* 最近调度「同一模型多个账号」的 chip 列表。
-   flex-wrap 天然响应式：宽屏一行放多个、手机端自动换行，不需要 JS 算列数。 */
+/* R2.47：最近调度「同一模型多个账号」的 chip 列表。
+   flex-wrap 天然响应式：宽屏一行放多个、手机端自动换行，不需要 JS 算列数。
+   每个 chip 自带「掩码名 · N 次 · 最近 HH:MM:SS」，和信息密度一致。 */
 .sched-accts{display:flex;flex-wrap:wrap;gap:4px 8px;margin-top:3px}
 .sched-acct{font-size:11px;line-height:15px;color:var(--label-2);white-space:nowrap}
 .sched-acct b{color:var(--label-1);font-weight:600}
@@ -1297,9 +1298,13 @@ async function load(p){
     body.innerHTML=renderGuide(); bindCopy(); bindTest(); return; }
   body.innerHTML='<div class="empty"><span class="spin"></span> 加载中…</div>';
   let d;
-  try{ d=await getJSON(p==="routes"?("schedule?tokens="+SCH_TOKENS):p); }
+  try{
+    const path = p==="routes" ? ("schedule?tokens="+SCH_TOKENS)
+      : (p==="models" ? ("models?mode="+encodeURIComponent(M.mode)) : p);
+    d=await getJSON(path);
+  }
   catch(e){ if(e.auth) return; body.innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>'; return; }
-  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null, d.blocked||null, d.manual_model||null);
+  if(p==="models") renderModels(d.items||d, d.active_account||null, d.recent_schedule||null, d.blocked||null, d.manual_model||null, d.mode||M.mode);
   else if(p==="accounts") renderAccounts(d);
   else if(p==="requests"){
     // P48：切换历史单独取（折叠后的段），失败不影响请求列表本身
@@ -1315,7 +1320,8 @@ async function load(p){
 }
 
 /* ==================== 模型 ==================== */
-const M={q:"",scope:"rec",open:new Set(),items:[],active:null,activeAcc:null,blocked:null};
+/* R2.51：模型页有 low / high 两个档位 tab，各自看本档当前调度。默认 low。 */
+const M={q:"",scope:"rec",mode:"low",open:new Set(),items:[],active:null,activeAcc:null,blocked:null,manualModel:null,recentSchedule:null};
 
 function groupOf(x){
   if(x.kind&&x.kind!=="chat") return "gen";
@@ -1346,10 +1352,12 @@ function defaultOpen(scope){
   return ["free","low"];
 }
 
-function renderModels(items,activeAcc,recentSchedule,blocked,manualModel){
+function renderModels(items,activeAcc,recentSchedule,blocked,manualModel,mode){
   const body=document.getElementById("body");
   M.items=items||[];
-  // R2.49：当前置顶模型（来自 routes.json::manual_model），控制「恢复自动调度」按钮
+  // R2.51：low / high 档位切换；high 不显示免费池。
+  M.mode=(mode==="high")?"high":"low";
+  // R2.51：当前档位的置顶模型，控制「恢复自动调度」按钮
   M.manualModel=manualModel||null;
   /* 账号信息要跨函数用：卡片是在 paintModels() 里画的，不是 renderModels。
      之前把它当参数往下传，paintModels 拿不到 → ReferenceError → 整张卡片
@@ -1363,8 +1371,13 @@ function renderModels(items,activeAcc,recentSchedule,blocked,manualModel){
   if(!M.items.length){ body.innerHTML='<div class="empty">暂无模型数据</div>'; return; }
   M.active=M.items.find(x=>x.active)||null;
   M.open=new Set(defaultOpen(M.scope));
+  const isHigh=M.mode==="high";
   body.innerHTML=`
-    <div id="freebar"></div>
+    <div class="seg" role="tablist" id="modelModeSeg" style="margin-bottom:14px">
+      <button type="button" role="tab" data-mm="low" aria-selected="${!isHigh}">low · 低成本</button>
+      <button type="button" role="tab" data-mm="high" aria-selected="${isHigh}">high · 高质量</button>
+    </div>
+    ${isHigh?"":'<div id="freebar"></div>'}
     <div class="search">
       <svg viewBox="0 0 16 16"><path d="M11.7 10.3a6 6 0 1 0-1.4 1.4l3.3 3.3 1.4-1.4-3.3-3.3zM6.5 10.5a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
       <input id="mq" placeholder="搜索模型名或用途" value="${esc(M.q)}" autocomplete="off">
@@ -1374,18 +1387,26 @@ function renderModels(items,activeAcc,recentSchedule,blocked,manualModel){
       <button class="fchip" data-s="all" aria-pressed="${M.scope==="all"}">全部</button>
       <button class="fchip" data-s="free" aria-pressed="${M.scope==="free"}">免费</button>
       <button class="fchip" data-s="image" aria-pressed="${M.scope==="image"}">支持图片</button>
-      ${M.manualModel?`<button class="fchip" id="resetModelPin" title="清除置顶，low/high 都恢复自动调度">↺ 恢复自动调度</button>`:""}
+      ${M.manualModel?`<button class="fchip" id="resetModelPin" title="清除本档位置顶，恢复自动调度">↺ 恢复默认</button>`:""}
     </div>
     <div id="mlist"></div>`;
+  // R2.51：low/high tab 切换——各自重新拉本档位数据
+  document.querySelectorAll("#modelModeSeg [data-mm]").forEach(b=>b.onclick=async()=>{
+    const m=b.dataset.mm;
+    if(m===M.mode) return;
+    M.mode=m; M.q=""; M.scope="rec";
+    await load("models");
+  });
   const resetBtn=document.getElementById("resetModelPin");
   if(resetBtn) resetBtn.onclick=async()=>{
     try{
-      await postJSON("schedule",{manual_model:null});
-      toast("已恢复自动调度（low/high）");
+      const key=M.mode==="high"?"manual_model_high":"manual_model_low";
+      await postJSON("schedule",{[key]:null});
+      toast("已恢复默认（"+M.mode.toUpperCase()+"）");
       M.manualModel=null;
       resetBtn.remove();   // 恢复后按钮立即消失，不必整页重绘
       await refreshChip();
-      const d=await getJSON("models");
+      const d=await getJSON("models?mode="+encodeURIComponent(M.mode));
       if(d){
         M.items=d.items||[]; M.activeAcc=d.active_account||null;
         M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
@@ -1403,7 +1424,7 @@ function renderModels(items,activeAcc,recentSchedule,blocked,manualModel){
     paintModels();
   });
   paintModels();
-  paintFreeBar();
+  if(!isHigh) paintFreeBar();  // R2.51：high 档没有免费池
 }
 
 /* R1.1：免费池健康度条（模型 tab 顶部）。预测是估算，文案如实标注。 */
@@ -1600,14 +1621,15 @@ function paintModels(){
     const x=M.items.find(i=>i.model_name===el.dataset.model);
     if(!x||x.active){ toast("已经是当前模型"); return; }
     const g=groupOf(x);
-    /* R2.49：切换会改变 low 和 high 两种对外模型实际调用的上游模型（置顶优先、
-       仍可自动兜底）。弹窗说明影响，用户确认后才写 manual_model。 */
+    /* R2.51：切换只影响当前档位（low 或 high），另一档不受影响。
+       置顶优先、仍可自动兜底。弹窗说明影响，确认后才写对应档位的键。 */
+    const modeName=M.mode.toUpperCase();
     const rows=[
       ["模型 ID",x.model_name],
       ["倍率",priceText(x)],
       ["平台",x.platform==="qoder"?"Qoder":"WorkBuddy"],
       ["上下文",x.context_window?ctxText(x.context_window):"未知"],
-      ["影响",`low 与 high 的实际调用模型都会置顶为「${x.display_name||x.model_name}」（该模型不可用时自动回落，不锁死）`],
+      ["影响",`仅 ${modeName} 的实际调用模型置顶为「${x.display_name||x.model_name}」（该模型不可用时自动回落，不锁死；${M.mode==="high"?"LOW":"HIGH"} 不受影响）`],
     ];
     const ok=await dialog({
       title:x.display_name||x.model_name,
@@ -1621,37 +1643,38 @@ function paintModels(){
 
 async function switchModel(x){
   try{
-    // R2.49：写调度真正读的 routes.json::manual_model（置顶优先，可自动兜底），
+    // R2.51：写当前档位的置顶键（manual_model_low / manual_model_high），另一档不动。
     // 并顺手清掉 P15 旧锁——旧锁完全绕过自动调度，且调度页看不见也清不掉。
-    // 以前这里写的是 state.json::active_model，真实调度根本不读它，点了毫无效果。
-    await postJSON("schedule",{manual_model:x.model_name, clear_legacy_lock:true});
-    toast("已置顶 "+(x.display_name||x.model_name)+"（low/high 都生效，不可用时自动回落）");
+    const key=M.mode==="high"?"manual_model_high":"manual_model_low";
+    await postJSON("schedule",{[key]:x.model_name, clear_legacy_lock:true});
+    toast("已置顶 "+(x.display_name||x.model_name)+"（仅 "+M.mode.toUpperCase()+" 生效，不可用时自动回落）");
     await refreshChip();
     // 重绘带上账号/最近调度/不可用原因，否则「没有可用账号」卡片会消失。
     try{
-      const d=await getJSON("models");
+      const d=await getJSON("models?mode="+encodeURIComponent(M.mode));
       if(d){
         M.items=d.items||[]; M.activeAcc=d.active_account||null;
         M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
         M.active=M.items.find(i=>i.active)||null;
+        M.manualModel=d.manual_model||null;
         paintModels();
       }
     }catch(e){}
-    // R2.49：置顶后顶部按钮栏补出「恢复自动调度」按钮（不改 DOM 结构就地加）
+    // R2.51：置顶后补出「恢复默认」按钮（只清本档位，不改 DOM 结构就地加）
     const filters=document.getElementById("filters");
     if(filters && !document.getElementById("resetModelPin")){
       const btn=document.createElement("button");
       btn.className="fchip"; btn.id="resetModelPin";
-      btn.title="清除置顶，low/high 都恢复自动调度";
-      btn.textContent="↺ 恢复自动调度";
+      btn.title="清除本档位置顶，恢复自动调度";
+      btn.textContent="↺ 恢复默认";
       filters.appendChild(btn);
       btn.onclick=async()=>{
         try{
-          await postJSON("schedule",{manual_model:null});
-          toast("已恢复自动调度（low/high）");
+          await postJSON("schedule",{[key]:null});
+          toast("已恢复默认（"+M.mode.toUpperCase()+"）");
           M.manualModel=null; btn.remove();
           await refreshChip();
-          const d=await getJSON("models");
+          const d=await getJSON("models?mode="+encodeURIComponent(M.mode));
           if(d){
             M.items=d.items||[]; M.activeAcc=d.active_account||null;
             M.blocked=d.blocked||null; M.recentSchedule=d.recent_schedule||null;
@@ -2178,11 +2201,17 @@ function bindUsage(host,label,day){
   };
 }
 
-/* P41：内部唯一键带平台前缀（qoder:<手机号>），显示时去掉——
+/* P41：内部唯一键带平台前缀（qoder:<掩码>），显示时去掉——
    左侧平台标签已经能区分，页面上再带前缀反而看不懂。 */
-/* R1.2：账号显示名唯一口径。底层 label（凭据文件名/DB 唯一键）保持不变，
-   只在展示层把 nickname 换成可读显示名。需要自定义昵称映射时由后端
-   gateway/display.py 的 GATEWAY_DISPLAY_ALIAS 环境变量统一处理，口径一处维护。 */
+/* 显示名映射：底层 label（凭据文件名/DB 唯一键/快照 key）保持不变，
+   只在展示层把 CLI username 换回旧日报里的手机号掩码，和签到系统
+   /opt/qoder-signin/daily_report.py 的 DISPLAY_NAME 同一套值。
+   账号 tab / 切换历史 / 请求列表都走这个函数，口径统一。 */
+/* R1.2：账号显示名唯一口径 —— 与 gateway/display.py 的 DISPLAY_ALIAS 保持同一张表。
+   内部昵称必须显示手机号掩码，不能露出内部标签。
+   改这里必须同步 gateway/display.py（README §14 有约定）。 */
+/* 脱敏：开源版不硬编码任何真实账号掩码/昵称，留空表；
+   手机号由下方正则自动掩码，昵称映射可通过后端 GATEWAY_DISPLAY_ALIAS 配置。 */
 const DISP_ALIAS={};
 function dispLabel(l){
   const s=String(l||"").replace(/^qoder:/,"");
@@ -2191,7 +2220,9 @@ function dispLabel(l){
   if(/^1\d{10}$/.test(s)) return s.slice(0,3)+"****"+s.slice(-4);
   return s;
 }
-/* 凭据**文件名**的 stem 也是内部 label，展开区「凭据→文件」必须过同一映射。
+/* R2.46：凭据**文件名**的 stem 也是内部 label（<昵称>.info / <昵称>.qoder.json）。
+   账号行标题早过了 dispLabel，但展开区「凭据→文件」直接显示 filename，
+   把内部 label 原样漏了出来——这是全项目最后一处可见的内部昵称。
    只映射第一个点之前的主干，扩展名（.info / .qoder.json）原样保留。 */
 function dispFile(name){
   const s=String(name||"");
@@ -2211,7 +2242,10 @@ function platBadge(platform,label){
 }
 
 /* R1.1：哪些账号当前有可用免费模型 —— 从 /free-forecast 拿 free_accounts，
-   在账号行标题后加 FREE 角标。结果缓存在 US.health，重绘不重复请求。 */
+   在账号行标题后加 FREE 角标。
+   R2.47：force=true 时强制重拉。以前无条件命中缓存（if(US.health) return），
+   导致 5 秒实时刷新永远拿到第一次的快照——扫码加了新账号后免费池仍显示「1 个可用」，
+   要手动刷新页面才更新。实时刷新路径必须强制拉新数据。 */
 async function loadForecast(force){
   if(US.health && !force) return US.health;
   try{ US.health=await getJSON("free-forecast"); }
@@ -2262,7 +2296,7 @@ function accountRow(x){
   const noRoute = x.in_routing===false;
   const routeNote = noRoute && isQ ? "未授权 · 不参与调度" : "";
   let sub = head || (isQ
-      // 小字不再重复账号名（标题已经显示了）——之前是「已授权 · <掩码手机号>」，
+      // 小字不再重复账号名（标题已经显示了）——之前是「已授权 · <掩码>」，
       // 同一行出现两次名字，把真正有用的信息挤到右边去了。
       ? (q.authorized ? "已授权" : "未授权 · 点右侧「授权」")
       : (x.balance!=null ? "余额已读取" : "余额暂不可用"));
@@ -2785,8 +2819,8 @@ function importDialog(opts){
         ov.classList.remove("show"); box.classList.remove("wide"); box.innerHTML="";
         // R2.39：扫的是已存在账号 → 提示「已更新登录状态」而非「已添加」。
         const acc=r.account||{};
-        // 账号名一律过 dispLabel：底层 label（如「主号」）是内部标签，
-        // 展示必须是手机号掩码，别把「主号」露出去。
+        // 账号名一律过 dispLabel：底层 label（内部昵称）是内部标签，
+        // 展示必须是手机号掩码，别把内部昵称露出去。
         const shown=dispLabel(acc.label||"账号");
         // R2.41：导入后端会实测 token。没通过就别再说「已更新登录状态」——
         // 那会让用户以为修好了（假阳性），实际 token 还是旧的。
@@ -3530,7 +3564,7 @@ function swDrawFlow(){
      所以左右两侧各加一个角色后缀区分，标签里再把后缀去掉。 */
   const L=n=>"« "+n, R=n=>n+" »";
   const strip=n=>String(n).replace(/^« | »$/g,"");
-  /* R1.3：节点名形如「WB <掩码手机号> · hy4flash-free」，一行放不下会被截成
+  /* R1.3：节点名形如「WB <掩码> · <模型>」，一行放不下会被截成
      「hy4f...」。标签改成两行：账号一行、模型一行，各自都短，完整可读。 */
   const twoLine=n=>strip(n).replace(" · ","\n");
   /* R2.27：标签两行显示（账号/模型各一行）。关键教训——series 级 label 的
@@ -3860,7 +3894,7 @@ function renderSchedule(d){
     <div class="srow"><div class="sk">手动指定<small>选中的模型排最前；它限流了仍自动换下一个</small></div>
       <div class="sv"><select id="manualsel" class="inp">
         <option value="">不指定（自动）</option>
-        ${visModels.map(m=>`<option value="${esc(m.model)}"${d.manual_model===m.model?" selected":""}>${esc(m.display_name||m.model)}</option>`).join("")}
+        ${visModels.map(m=>`<option value="${esc(m.model)}"${d.manual_model_low===m.model?" selected":""}>${esc(m.display_name||m.model)}</option>`).join("")}
       </select></div></div>
     <div class="srow"><div class="sk">预览请求长度<small>免费只在一段长度内；换个长度，排序会变</small></div>
       <div class="sv"><select id="lenSel" class="inp">
@@ -3896,7 +3930,7 @@ function renderSchedule(d){
       const nc=callsOf(m.model,"low");
       // 停用状态按任一侧 variant 命中（合并后一个模型可能有多个原始 id）
       const isOff=(m.variants||[m]).some(x=>disabled.has(x.model));
-      const isManual=(m.variants||[m]).some(x=>d.manual_model===x.model);
+      const isManual=(m.variants||[m]).some(x=>d.manual_model_low===x.model);
       const rep=(m.variants||[m])[0].model;  // low 排序与 high 平台开关无关，固定取首个 variant
       h+=`<div class="orderrow${isOff?" off":""}${isManual?" manual":""}${!SCH.expand.low&&i>=3?" folded":""}" data-model="${esc(rep)}" data-variants="${esc((m.variants||[m]).map(x=>x.model).join(","))}">
         <span class="handle" title="拖动排序">⣿</span>
@@ -4196,7 +4230,7 @@ function bindSchedule(){
   /* 手动指定模型（下拉） */
   const msel=document.getElementById("manualsel");
   if(msel) msel.addEventListener("change",async()=>{
-    await saveSchedule({manual_model:msel.value||null});
+    await saveSchedule({manual_model_low:msel.value||null});
   });
 
   /* 清除 P15 遗留手动锁 */

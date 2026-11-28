@@ -87,7 +87,7 @@ def _live_accounts() -> list[dict]:
     return out
 
 
-def _active_preview():
+def _active_preview(mode: str = "low"):
     """当前调度会选的候选对象（含账号/实测价格），拿不到就返回 None。
 
     R1.3：**统一入口**。以前「挂实测价格」的代码只写在 api_models 的 DB 分支里，
@@ -95,15 +95,50 @@ def _active_preview():
     `_live_models()` 那条提前 return 的分支 —— 挂价格的代码永远执行不到，
     active 卡片只能看目录倍率（hunyuan-chat 目录未标价）→ 显示「未标价」，
     用户以为它在偷偷扣费。
+
+    R2.51：加 mode 参数，high tab 要看 high 档当前会选谁（默认 low 兼容旧调用）。
     """
     try:
         from . import scheduler as _SCHED
-        return _SCHED.preview_candidate(est_tokens=200, mode="low")
+        return _SCHED.preview_candidate(est_tokens=200, mode=mode)
     except Exception:
         return None
 
 
-def _preview_blocked() -> str | None:
+def _preview_call(fn, mode: str):
+    """按 mode 调 preview 函数；兼容把 fn mock 成无参 lambda 的老测试。"""
+    try:
+        return fn(mode)
+    except TypeError:
+        return fn()
+
+
+def _active_model_for(mode: str, preview) -> str | None:
+    """当前档位实际会用的上游模型。
+
+    low 沿用 `_active_upstream_model()`（P48/P49 全站唯一口径，老测试 mock 这一层）；
+    high 用本档 preview 的候选模型。
+    """
+    if mode == "high":
+        return getattr(preview, "model_name", None) if preview is not None else None
+    return _active_upstream_model()
+
+
+def _active_account_for(mode: str, preview) -> dict | None:
+    """当前档位的账号（P49 唯一口径 + R2.51 分档）。
+
+    low 继续走 `_active_upstream_account()`（读 `_active_upstream`，与顶栏同源，
+    老测试也 mock 这一层）；high 用本档 preview 的候选账号。
+    """
+    if mode == "high":
+        if preview is not None and getattr(preview, "account_label", None):
+            return {"label": preview.account_label,
+                    "platform": getattr(preview, "platform", None)}
+        return None
+    return _active_upstream_account()
+
+
+def _preview_blocked(mode: str = "low") -> str | None:
     """R2.44：没有可用候选时，返回调度器的真实原因；有候选返回 None。
 
     用户报告的 bug：账号 176 锁死且积分用完、免费模型 429 冷却，模型页却依然
@@ -115,11 +150,11 @@ def _preview_blocked() -> str | None:
         return None
     # 先看 preview 有没有候选（多數情况就是有，不用再算一遍计划）。
     # 用 _active_preview() 而不是重新算 plan：测试与调用方都把 preview 当唯一口径。
-    if _active_preview() is not None:
+    if _preview_call(_active_preview, mode) is not None:
         return None
     try:
         from . import scheduler as _SCHED
-        plan = _SCHED.preview_plan(est_tokens=200, mode="low")
+        plan = _SCHED.preview_plan(est_tokens=200, mode=mode)
     except Exception:
         return None
     if plan.candidates:
@@ -875,39 +910,49 @@ def _recent_schedule_view(recent: dict) -> dict:
 @admin.get("/models")
 async def api_models(request: Request) -> dict:
     require_admin_token(request)
+    # R2.51：模型页有 low/high 两个 tab，各自看本档位的真实调度。默认 low 兼容旧调用。
+    mode = (request.query_params.get("mode") or "low").lower()
+    if mode not in ("low", "high"):
+        mode = "low"
+    public_model = settings.high_model if mode == "high" else settings.low_model
     rows = store.list_models()
     if not rows:
         # R1.3：live 分支（线上实际走这条）已在 _live_models 里挂了实测价格，
         # 这里再兜一次底，保证「当前模型」卡片永远显示本次免费/扣费而非「未标价」。
         try:
-            recent = _recent_schedule_view(store.recent_schedule(window_minutes=5))
+            recent = _recent_schedule_view(
+                store.recent_schedule(window_minutes=5, public_model=public_model))
         except Exception:
             recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
-        blocked = _preview_blocked()
+        blocked = _preview_call(_preview_blocked, mode)
         # _live_models() 返回的是缓存里的同一个 list，改元素会污染缓存 → 先拷贝
         items = [dict(it) for it in _live_models()]
-        if blocked:
-            # 没有可用候选时不能有任何一项标「使用中」——那个「使用中」只是默认模型的回声
-            for it in items:
-                it["active"] = False
-        items = _attach_preview_price(items, _active_preview())
+        # R2.51：本档位当前会选的上游模型 → 标 active（high 不能再标 low 的免费模型）
+        preview = _preview_call(_active_preview, mode)
+        active_name = _active_model_for(mode, preview)
+        for it in items:
+            it["active"] = (not blocked and active_name is not None
+                            and it.get("model_name") == active_name)
+        items = _attach_preview_price(items, preview)
+        active_acc = _active_account_for(mode, preview)
         return {"items": items,
-                "active_account": _active_upstream_account(),
+                "active_account": active_acc,
                 "blocked": blocked,
                 "recent_schedule": recent,
-                "manual_model": _current_manual_model()}
+                "mode": mode,
+                "manual_model": _current_manual_model(mode)}
     import time
     # P48：这里原来用 effective_model()（P15 手动锁/默认值），和接入页的
     # _active_upstream_model()（问调度器实际会选谁）口径不同 —— 同一个"当前模型"
     # 在模型 tab 显示 Hy4 flash、接入 tab 显示 space-bunny，用户以为出 bug。
     # 统一改成调度器口径；_active_upstream_model 定义在下方，运行时已解析，可前向调用。
     now = time.time()
-    active = _active_upstream_model()
-    # R1.2/R1.3：active 卡片显示「本次预览的实测价格」而不是目录倍率。
-    # 目录 factor=None 的模型（如 hunyuan-chat）实测短请求免费，旧逻辑只看
-    # price_factor → 显示「未标价」，用户以为它在偷偷扣费。这里把调度器预览
-    # 候选的 est_cost/free_upto 带出去，前端优先用它显示「本次免费 / N 积分」。
-    active_preview = _active_preview()
+    # R2.51：本档位的当前调度候选（active / 价格 / 账号全用这一个口径）。
+    active_preview = _preview_call(_active_preview, mode)
+    active = _active_model_for(mode, active_preview)
+    blocked = _preview_call(_preview_blocked, mode)
+    if blocked:
+        active = None
     items = []
     for r in rows:
         promo = r["promotion_until"]
@@ -941,19 +986,27 @@ async def api_models(request: Request) -> dict:
     # R2.39b：模型 tab 与用量日志统一口径——直接给最近窗口的**真实调度**记录。
     # 有请求时前端用它替换「典型短请求预览」，没请求时才退回预览。
     try:
-        recent = _recent_schedule_view(store.recent_schedule(window_minutes=5))
+        recent = _recent_schedule_view(
+            store.recent_schedule(window_minutes=5, public_model=public_model))
     except Exception:
         recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
-    return {"items": items, "active_account": _active_upstream_account(),
-            "blocked": _preview_blocked(),
+    active_acc = _active_account_for(mode, active_preview)
+    return {"items": items, "active_account": active_acc,
+            "blocked": blocked,
             "recent_schedule": recent,
-            "manual_model": _current_manual_model()}
+            "mode": mode,
+            "manual_model": _current_manual_model(mode)}
 
 
-def _current_manual_model() -> str | None:
-    """R2.49：当前置顶的模型（routes.json::manual_model），前端据此显示恢复按钮。"""
+def _current_manual_model(mode: str = "low") -> str | None:
+    """R2.51：某档位当前置顶的模型，前端据此显示恢复按钮。
+
+    与 app._manual_model_for 同一口径：新键 manual_model_<mode> 优先，
+    回退旧 manual_model（老配置兼容）。
+    """
     try:
-        return router.load_config().get("manual_model") or None
+        from .app import _manual_model_for
+        return _manual_model_for(router.load_config(), mode)
     except Exception:
         return None
 
@@ -1215,6 +1268,9 @@ async def api_schedule(request: Request) -> dict:
         "disabled_models": list(cfg.get("disabled_models") or []),
         # P40：手动指定模型（置顶，不是独占）
         "manual_model": cfg.get("manual_model") or None,
+        # R2.51：low / high 各自独立的置顶（模型页两个 tab 读写这两个）
+        "manual_model_low": cfg.get("manual_model_low") or None,
+        "manual_model_high": cfg.get("manual_model_high") or None,
         # P15 遗留的「完全手动锁」还在不在？在的话要提示用户清掉——
         # 它会让整个自动调度失效（免费优先/轮转/付费兜底全都不生效）。
         "legacy_lock": modelstate.active_model(),
@@ -1311,20 +1367,35 @@ async def api_save_schedule(request: Request) -> dict:
         if not isinstance(disabled, list):
             raise HTTPException(status_code=400, detail="disabled_models must be a list")
         cfg["disabled_models"] = [str(x) for x in disabled]
-    if "manual_model" in body:
-        # P40：手动指定模型（置顶优先）。null / 空串 = 取消指定，回到纯自动。
-        manual = body["manual_model"]
-        if manual is None or (isinstance(manual, str) and not manual.strip()):
-            cfg["manual_model"] = None
+    def _validate_model_id(mid: str) -> str:
+        # 只允许指定目录里真实存在的模型，避免写个不存在的 id 让上游 404。
+        if settings.upstream == "workbuddy":
+            from .workbuddy_upstream import catalog
+            ids = {r.get("model_name") for r in catalog()}
+            if ids and mid not in ids:
+                raise HTTPException(status_code=400, detail=f"unknown model: {mid}")
+        return mid
+
+    def _set_manual(key: str, value: Any) -> None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            cfg[key] = None
         else:
-            mid = str(manual).strip()
-            # 只允许指定目录里真实存在的模型，避免写个不存在的 id 让上游 404。
-            if settings.upstream == "workbuddy":
-                from .workbuddy_upstream import catalog
-                ids = {r.get("model_name") for r in catalog()}
-                if ids and mid not in ids:
-                    raise HTTPException(status_code=400, detail=f"unknown model: {mid}")
-            cfg["manual_model"] = mid
+            cfg[key] = _validate_model_id(str(value).strip())
+
+    # R2.51：low / high 各自独立的置顶。新前端写 manual_model_low/high；
+    # 旧 manual_model 保留兼容——写它等于同时设置两档（老前端/测试仍可用）。
+    if "manual_model" in body:
+        # 旧键照写（老测试/老前端读它断言）；同时同步两档，行为等价于旧版「全局生效」。
+        _set_manual("manual_model", body["manual_model"])
+        _set_manual("manual_model_low", body["manual_model"])
+        _set_manual("manual_model_high", body["manual_model"])
+    if "manual_model_low" in body:
+        _set_manual("manual_model_low", body["manual_model_low"])
+        # 用新键 = 分档语义，清掉旧全局键，免得另一档被旧值回退影响。
+        cfg["manual_model"] = None
+    if "manual_model_high" in body:
+        _set_manual("manual_model_high", body["manual_model_high"])
+        cfg["manual_model"] = None
     if body.get("clear_legacy_lock"):
         # 清掉 P15 遗留的「完全手动锁」——它会让整个自动调度失效。
         from . import modelstate

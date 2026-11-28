@@ -120,7 +120,11 @@ class Router:
             "ui_low_order": [],
             "enabled_accounts": [],     # 空=全部
             "disabled_models": [],      # 被禁用的模型，调度时直接跳过
-            "manual_model": None,       # 调度配置层的置顶（不是 P15 旧锁）
+            "manual_model": None,       # 旧置顶键（兼容；R2.51 起由 manual_model_low/high 取代）
+            # R2.51：low / high 各自独立的置顶模型。旧 manual_model 兼容读取：
+            # 没写新键时回退到它，写新键后不再受它影响，避免老用户配置失效。
+            "manual_model_low": None,
+            "manual_model_high": None,
             # R1 双模式
             "profiles": {
                 "low": dict(self._LOW_PROFILE),

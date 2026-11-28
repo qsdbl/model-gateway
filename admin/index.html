@@ -2095,6 +2095,13 @@ function dispLabel(l){
   if(/^1\d{10}$/.test(s)) return s.slice(0,3)+"****"+s.slice(-4);
   return s;
 }
+/* 凭据**文件名**的 stem 也是内部 label，展开区「凭据→文件」必须过同一映射。
+   只映射第一个点之前的主干，扩展名（.info / .qoder.json）原样保留。 */
+function dispFile(name){
+  const s=String(name||"");
+  const i=s.indexOf(".");
+  return i<0 ? dispLabel(s) : dispLabel(s.slice(0,i))+s.slice(i);
+}
 /* 平台角标：账号 tab / 调度切换 / 请求列表共用同一实现，保证颜色一致。
    R1 Q5：显示缩写（WorkBuddy→WB / Qoder→QD），title 保留全称（hover 可见）。
    平台是品牌标识，颜色固定不随主题变（见 .ptag CSS 的 data-plat 选择器）。 */
@@ -2227,7 +2234,7 @@ function accountRow(x){
       ${qdetail}
       <div class="sub2">凭据</div>
       <div class="kv"><span>有效期</span><b>${esc(daysLeftText((x.credential||{}).expires_at))}</b></div>
-      <div class="kv"><span>文件</span><b>${esc((x.credential||{}).file||"—")}</b></div>
+      <div class="kv"><span>文件</span><b>${esc(dispFile((x.credential||{}).file||"—"))}</b></div>
       ${x.active?"":(x.inference===false?"":`<button class="btn secondary" data-switch="${esc(x.label)}" style="margin-top:10px">锁定此账号</button>`)}
       <button class="btn secondary danger" data-remove="${esc(x.label)}" data-platform="${esc(x.platform||"workbuddy")}" style="margin-top:10px">从网关剔除此账号</button>
     </div>`;

@@ -534,7 +534,7 @@ def build_plan(
                                 "reason": "已锁定其他账号",
                             })
                     pool = kept_acc
-                    notes.append("手动账号：" + locked_acc)
+                    notes.append("手动账号：" + _plain_account(locked_acc))
                 else:
                     # R2.43：锁定账号不在候选池里（账单读不到/被停用）→ 直接不服务，
                     # 不再静默回退到别的账号。用户既然锁定了，就只走这一个；

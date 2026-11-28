@@ -399,19 +399,14 @@ async def responses_endpoint(request: Request) -> Any:
     store.attach_route(req_id, **fields)
     chosen_ctx.update(account=chosen.account_label, platform=chosen.platform,
                       balance=chosen.balance)
-    # R1 提醒（low）：与 chat 端点一致——选中收费模型即尝试当天首封提醒。
+    # R2.52：与 chat 端点一致——只有免费池耗尽才发。
     if _mode == "low" and chosen.est_cost is not None and chosen.est_cost > 0:
         try:
             from . import notify
-            from .scheduler import free_fallback_summary
-            # R2.50：与 chat 端点一致，免费池当前状态由调用方查好传入。
-            try:
-                from .forecast import _pool_health
-                _fp = _pool_health()
-                _fp_status = f"{_fp.get('free_pairs')}/{_fp.get('free_capacity')} 可用"
-            except Exception:
-                _fp_status = None
-            notify.note_paid_start(
+            exhausted, _fp_status = notify.free_pool_exhausted()
+            if exhausted:
+                from .scheduler import free_fallback_summary
+                notify.note_paid_start(
                 model=chosen.model_name, account=chosen.account_label,
                 cost=chosen.est_cost, balance=chosen.balance,
                 daily_total=store.credit_today(),

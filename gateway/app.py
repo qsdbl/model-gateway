@@ -614,19 +614,14 @@ async def chat_completions(request: Request) -> Any:
     # 让「进行中」的明细行也显示真实模型名而不是 unknown（不必等 finalize）。
     store.attach_route(req_id, **route_fields)
     # R1 提醒（low）：本次选中了付费模型 → 当天首封提醒。
-    # 放在路由成功后、上游调用前；notify 内部按天去重，失败不影响请求。
+    # R2.52：只有免费池耗尽（free_pairs==0）才发；单次超时回落付费不发。
     if current_mode() == "low" and chosen.est_cost is not None and chosen.est_cost > 0:
         try:
             from . import notify
-            from .scheduler import free_fallback_summary
-            # R2.50：免费池当前状态由调用方查好传入（避免 forecast→scheduler 循环依赖）。
-            try:
-                from .forecast import _pool_health
-                _fp = _pool_health()
-                _fp_status = f"{_fp.get('free_pairs')}/{_fp.get('free_capacity')} 可用"
-            except Exception:
-                _fp_status = None
-            notify.note_paid_start(
+            exhausted, _fp_status = notify.free_pool_exhausted()
+            if exhausted:
+                from .scheduler import free_fallback_summary
+                notify.note_paid_start(
                 model=chosen.model_name, account=chosen.account_label,
                 cost=chosen.est_cost, balance=chosen.balance,
                 daily_total=store.credit_today(),

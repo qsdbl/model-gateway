@@ -21,7 +21,7 @@ from typing import Any
 
 from . import mailer
 from .config import settings
-from .display import display_label, scrub_text
+from .display import display_label
 from .store import store
 
 _PREFIX = "notify.r1."
@@ -94,6 +94,23 @@ def _current_free_pool_text() -> str:
         return ""
 
 
+def free_pool_exhausted() -> tuple[bool, str]:
+    """判断是否该发「开始消耗积分」提醒，并返回免费池状态文本。
+
+    R2.52（用户拍板）：只有 free_pairs==0（所有官方免费模型的账号都冷却/额度
+    用完）才算「免费池耗尽」，才发扣费提醒。单次免费模型超时回落付费、免费池
+    仍有账号时绝不发。取数失败返回 (False, "")：宁可不发，绝不误报。
+    """
+    try:
+        from .forecast import _pool_health
+        h = _pool_health()
+    except Exception:
+        return False, ""
+    pairs = h.get("free_pairs")
+    status = f"{pairs}/{h.get('free_capacity')} 可用" if pairs is not None else ""
+    return (pairs == 0), status
+
+
 def note_paid_start(*, model: str, account: str, cost: float | None,
                     balance: float | None, daily_total: float | None = None,
                     price_factor: float | None = None,
@@ -133,26 +150,23 @@ def note_paid_start(*, model: str, account: str, cost: float | None,
     factor_text = (
         f"x{float(price_factor):g}" if price_factor is not None else "目录未标价"
     )
-    # R2.50：reason / free_alternatives 是调度原样透传的自由文本，可能拼了
-    # 内部 label，绕过「账号」字段的脱敏。出邮件前统一 scrub。
-    reason_text = scrub_text((choose_reason or "按本次预计扣费择优").strip())
+    # 账号显示名在源头（scheduler 生成 reason 时）已过 display_label，
+    # 这里直接用，不做字符串层面二次洗——那是补丁，不是根治。
+    reason_text = (choose_reason or "按本次预计扣费择优").strip()
     free_text = (
-        "；".join(scrub_text(x) for x in free_alternatives)
-        if free_alternatives else "本次官方免费模型不可用（限流 / 冷却 / 未标定）"
+        "；".join(free_alternatives)
+        if free_alternatives else "官方免费模型全部不可用（限流 / 额度耗尽 / 冷却）"
     )
-    # R2.50：免费池此刻的真实状态——用户反复问「明明还有免费账号为什么扣费」，
-    # 直接把 X/Y 写进邮件，配合下面的回落说明，避免误以为免费池耗尽。
     if free_pool_status is None:
         free_pool_status = _current_free_pool_text()
-    subject = "[网关] low 开始消耗积分"
+    subject = "[网关] low 免费池已耗尽，开始消耗积分"
     intro = (
-        "本次调度选中了一个付费模型，开始消耗账号积分。通常是首选免费模型"
-        "这一次请求临时失败（超时 / 限流）后自动回落到付费候选，"
-        "并不代表免费池已经耗尽。"
+        "当前所有官方免费模型都不可用（账号全部冷却或额度用完），"
+        "本次调度被迫选中付费模型，开始消耗账号积分。"
     )
     footnote = (
-        "当天首次提醒，后续不再单独发信。付费模型短请求可能免扣，不代表它属于免费池。"
-        "免费模型恢复后会自动回到免费池，无需手动干预。"
+        "当天首次提醒，后续不再单独发信。免费模型在冷却到期/额度重置后会自动回到免费池，"
+        "无需手动干预。付费模型短请求可能免扣，不代表它属于免费池。"
     )
     rows = [
         ("模型", model),

@@ -555,11 +555,19 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
   font-size:11px;line-height:15px;padding:1px 7px;cursor:pointer}
 .dbseg button[aria-pressed="true"]{background:var(--accent);color:var(--surface);border-color:var(--accent)}
 .dbars{display:flex;align-items:flex-end;gap:2px;height:58px}
-.dbucket{flex:1 1 0;min-width:0;height:100%;padding:0;border:0;background:none;cursor:default;
-  display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:2px}
+/* R2.55：下钻柱状——容器 relative 让峰值数值贴柱顶（bottom 按柱高内联） */
+.dbucket{flex:1 1 0;min-width:0;height:100%;position:relative;
+  display:flex;flex-direction:column;justify-content:flex-end;align-items:center}
 .dbucket i{display:block;width:100%;max-width:22px;min-height:1px;border-radius:2px 2px 0 0;
   background:color-mix(in srgb,var(--accent) 55%,transparent)}
-.dbucket span{font-size:9px;line-height:11px;color:var(--label-3);font-variant-numeric:tabular-nums}
+.dbpk{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;
+  font-size:11px;line-height:14px;font-weight:700;color:var(--accent);pointer-events:none}
+.dtick{font-size:9px;line-height:11px;color:var(--label-3);font-variant-numeric:tabular-nums;margin-top:2px}
+/* 下钻折线：与主图同款（viewBox 拉伸，文字用 overlay） */
+.dline{position:relative;height:54px;margin:0}
+.dline svg{width:100%;height:54px;display:block;overflow:visible}
+.dline svg circle{fill:var(--accent);stroke:var(--surface);stroke-width:1}
+.dline svg circle.dlinepk{fill:var(--accent);stroke:var(--surface);stroke-width:1.5}
 .hlegend{display:flex;gap:14px;justify-content:flex-end;font-size:11px;line-height:15px;color:var(--label-2);margin-top:3px}
 .hlegend span{display:inline-flex;align-items:center;gap:4px}
 .hlegend i{width:8px;height:8px;border-radius:2px;display:inline-block}
@@ -1554,22 +1562,21 @@ function paintModels(){
     groups.sort((a,b)=>b.last_at-a.last_at);
     // 当前正在被调用的模型 = 模型列表的对勾口径（M.active），随 5 秒刷新一起更新
     const activeModel=M.active&&M.active.model_name;
-    /* R2.53：本区展示的是「最近真实调度」（历史），对勾却是「调度器当前首选」
-       （预测）。两者本就不同——用户看到最近用过的 hunyuan-chat 没打勾、底部列表
-       勾的又是别的，以为没对应上。这里把两种语义都标清：
-         · ✓        = 当前调度首选（与底部列表同一个口径，随刷新实时变）
-         · 刚用过    = 最近 5 分钟里最后一次真实使用的模型（本区第一行）
-       于是不再混淆「用过」和「当前选中」。 */
-    const lastUsedModel=groups[0]&&groups[0].model;
+    /* R2.55：口径统一 —— 对勾 = 最近一次真实调用的模型（后端 active 已从
+       recent_schedule 取最后一条真实请求，与日志「Token 调用记录」同一口径）。
+       本区展示的就是真实调度历史，对勾落在其中最近用过的那一行，用户不再困惑
+       「日志里用的模型 vs 模型页勾选」对不上。 */
+    const lastUsedModel=groups[0]&&groups[0].model;  // 仍保留：无 active 时的兜底显示
     const rowsHtml=groups.slice(0,8).map(g=>{
       const inPool=!!g.is_free_pool;
       let price;
       if(inPool) price="免费";
       else if(g.price_factor!=null) price=num(g.price_factor)+"x";
       const pill=price?`<span class="pill ${inPool?"free":"info"}">${esc(price)}</span>`:"";
-      const tick=(activeModel&&g.model===activeModel)?'<span class="tick" title="调度器当前首选模型（与底部列表对勾同一口径，随实时刷新变化）">✓</span>':"";
-      /* R2.53：「刚用过」标在最近最后一次真实调度的模型上，和「当前首选✓」区分 */
-      const lastUsed=(g.model===lastUsedModel)?'<span class="justused" title="最近 5 分钟内最后一次真实使用的模型">刚用过</span>':"";
+      const tick=(activeModel&&g.model===activeModel)?'<span class="tick" title="当前实际使用的模型（与日志同一口径，每 5 秒刷新）">✓</span>':"";
+      /* R2.55：对勾已代表最近真实调用，不再单列「刚用过」徽章（语义重复）。
+         仅当后端没给出 active（如窗口内无请求且预览也拿不到）时，兜底标一下最近用过。 */
+      const lastUsed=(!activeModel&&g.model===lastUsedModel)?'<span class="justused" title="最近一次真实使用的模型">刚用过</span>':"";
       const accts=g.accts.slice().sort((a,b)=>(b.last_at||0)-(a.last_at||0)).map(a=>{
         const at=a.last_at?` · ${hhmmss(a.last_at)}`:"";
         // R2.49：当前冷却/429 的账号标红并写明原因，与仍可用账号区分。
@@ -2345,10 +2352,9 @@ function bindUsage(host,label,day){
       paintHours(label);
       return;
     }
-    const bk=e.target.closest("[data-bucket]");
-    if(bk){ US.bucket.set(label,+bk.dataset.bucket); paintHours(label); return; }
-    const dback=e.target.closest("[data-drill-back]");
-    if(dback){ US.drill.delete(label); paintHours(label); return; }
+    /* R2.55：下钻区图形切换（柱状/折线）；固定 10 分钟，不再有 6/10 与收起按钮。 */
+    const dc=e.target.closest("[data-drill-chart]");
+    if(dc){ US.drillChart.set(label,dc.dataset.drillChart); paintHours(label); return; }
     const more=e.target.closest("[data-hour-more]");
     if(more){
       const hour=more.dataset.hourMore;

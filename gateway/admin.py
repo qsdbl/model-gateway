@@ -124,6 +124,39 @@ def _active_model_for(mode: str, preview) -> str | None:
     return _active_upstream_model()
 
 
+def _active_model_from_recent(recent: dict | None) -> str | None:
+    """R2.55：模型页对勾口径统一到「最近一次真实调用的模型」。
+
+    用户诉求：日志里显示实际用了什么模型，模型 tab 每 5 秒刷新就应该勾那个模型。
+    recent_schedule 来自 requests 表（按 public_model 分档过滤后），每条带 last_at；
+    取最后一条真实请求的上游模型名，与日志「Token 调用记录」同一口径。
+    窗口内没有请求时返回 None，调用方回退 preview 预测（避免勾选凭空消失）。
+    """
+    items = (recent or {}).get("items") or []
+    if not items:
+        return None
+    last = max(items, key=lambda it: float(it.get("last_at") or 0))
+    return last.get("model_name") or None
+
+
+def _active_model_resolved(recent: dict | None, fallback: str | None,
+                           item_names) -> str | None:
+    """R2.55：把「最近真实调用」落到当前档位清单上，落不上就回退 preview。
+
+    用户诉求是"实际调了什么就勾什么"，但 recent_schedule 是历史窗口，
+    可能出现清单里已经没有的历史模型（下架/切档/测试 DB 残留）。
+    这种情况若直接采用会导致整档没有勾选项，所以只在模型名确实出现在
+    当前候选清单（大小写不敏感）时才采用 recent，否则退回调度器预测。
+    """
+    recent_name = _active_model_from_recent(recent)
+    if recent_name:
+        rl = str(recent_name).lower()
+        for n in item_names:
+            if str(n or "").lower() == rl:
+                return recent_name
+    return fallback
+
+
 def _active_account_for(mode: str, preview) -> dict | None:
     """当前档位的账号（P49 唯一口径 + R2.51 分档）。
 
@@ -1028,9 +1061,12 @@ async def api_models(request: Request) -> dict:
             items = _high_model_items()
         else:
             items = [dict(it) for it in _live_models()]
-        # R2.51：本档位当前会选的上游模型 → 标 active（high 不能再标 low 的免费模型）
+        # R2.55：对勾口径统一到「最近一次真实调用的模型」（与日志同一口径）。
+        # 仅当该模型确实在当前档位清单里才采用，否则回退 preview（避免空勾选）。
         preview = _preview_call(_active_preview, mode)
-        active_name = _active_model_for(mode, preview)
+        fallback = _active_model_for(mode, preview)
+        active_name = _active_model_resolved(
+            recent, fallback, [it.get("model_name") for it in items])
         # R2.54：大小写不敏感匹配（high 清单 Qoder id 与 preview 可能仅大小写不同）。
         active_lc = str(active_name).lower() if active_name else ""
         for it in items:
@@ -1050,9 +1086,20 @@ async def api_models(request: Request) -> dict:
     # 在模型 tab 显示 Hy4 flash、接入 tab 显示 space-bunny，用户以为出 bug。
     # 统一改成调度器口径；_active_upstream_model 定义在下方，运行时已解析，可前向调用。
     now = time.time()
-    # R2.51：本档位的当前调度候选（active / 价格 / 账号全用这一个口径）。
+    # R2.55：先取本档最近真实调度（对勾口径），窗口内无请求再回退 preview 预测。
+    try:
+        recent = _recent_schedule_view(
+            store.recent_schedule(window_minutes=5, public_model=public_model))
+    except Exception:
+        recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
     active_preview = _preview_call(_active_preview, mode)
-    active = _active_model_for(mode, active_preview)
+    # R2.55：recent 模型必须落在本档实际清单里才采用，否则回退 preview。
+    _fallback_active = _active_model_for(mode, active_preview)
+    if mode == "high":
+        _candidate_names = [it.get("model_name") for it in _high_model_items()]
+    else:
+        _candidate_names = [r["model_name"] for r in rows]
+    active = _active_model_resolved(recent, _fallback_active, _candidate_names)
     blocked = _preview_call(_preview_blocked, mode)
     if blocked:
         active = None
@@ -1067,8 +1114,6 @@ async def api_models(request: Request) -> dict:
             it["active"] = (not blocked and bool(active_lc)
                             and str(it.get("model_name") or "").lower() == active_lc)
         items = _attach_preview_price(items, active_preview)
-        recent = _recent_schedule_view(
-            store.recent_schedule(window_minutes=5, public_model=public_model))
         active_acc = _active_account_for(mode, active_preview)
         return {"items": items, "active_account": active_acc,
                 "blocked": blocked, "recent_schedule": recent,
@@ -1099,17 +1144,11 @@ async def api_models(request: Request) -> dict:
             "recommended": True,
             "is_default": False,
             "fetched_at": r["fetched_at"],
-            "active": r["model_name"] == active,
+            # R2.55：大小写不敏感（recent 里的模型名与目录 id 仅大小写不同时也要勾上）
+            "active": bool(active) and str(r["model_name"]).lower() == str(active).lower(),
         })
     # 把预览候选的实测价格挂到 active 项上（只挂 active，避免影响列表排序）
     _attach_preview_price(items, active_preview)
-    # R2.39b：模型 tab 与用量日志统一口径——直接给最近窗口的**真实调度**记录。
-    # 有请求时前端用它替换「典型短请求预览」，没请求时才退回预览。
-    try:
-        recent = _recent_schedule_view(
-            store.recent_schedule(window_minutes=5, public_model=public_model))
-    except Exception:
-        recent = {"window_minutes": 5, "total": 0, "items": [], "segments": []}
     active_acc = _active_account_for(mode, active_preview)
     return {"items": items, "active_account": active_acc,
             "blocked": blocked,

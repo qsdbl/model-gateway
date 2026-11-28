@@ -121,3 +121,58 @@ def chunk_has_finish_reason(chunk: str) -> bool:
         if reason:
             return True
     return False
+
+
+def chunk_diag_label(chunk: str) -> str:
+    """把一帧压成短标签，供断流诊断日志用（R2.48，只观测不改判据）。
+
+    目的：断流时搞清楚上游到底断在哪一环——正文帧 / finish_reason / usage /
+    [DONE] / 心跳 / 坏帧。仅用于日志，绝不参与成功/失败判定。
+    """
+    text = chunk.strip()
+    if not text:
+        return "empty"
+    if text.startswith(":"):
+        return "heartbeat"
+    if "[DONE]" in text:
+        return "done"
+    if not text.startswith("data:"):
+        return "other"
+    body = text[5:].strip()
+    if not body:
+        return "no-body"
+    try:
+        obj = json.loads(body)
+    except Exception:  # noqa: BLE001
+        return "bad-json"
+    if not isinstance(obj, dict):
+        return "not-dict"
+    parts: list[str] = []
+    if "usage" in obj:
+        parts.append("usage")
+    choices = obj.get("choices")
+    reasons: list[str] = []
+    has_content = False
+    has_tool = False
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            reason = choice.get("finish_reason")
+            if reason:
+                reasons.append(str(reason))
+            delta = choice.get("delta") or choice.get("message") or {}
+            if isinstance(delta, dict):
+                if delta.get("content"):
+                    has_content = True
+                if delta.get("tool_calls"):
+                    has_tool = True
+    if has_content:
+        parts.append("content")
+    if has_tool:
+        parts.append("tool")
+    if reasons:
+        parts.append("finish=" + ",".join(reasons))
+    elif '"finish_reason"' in body:
+        parts.append("finish=empty")
+    return "+".join(parts) if parts else "frame"

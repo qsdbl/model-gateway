@@ -113,6 +113,12 @@ def chunk_has_finish_reason(chunk: str) -> bool:
     return _impl(chunk)
 
 
+def chunk_diag_label(chunk: str) -> str:
+    """R2.48：把一帧压成短标签供断流诊断日志用（只观测，不改判据）。"""
+    from .credit import chunk_diag_label as _impl
+    return _impl(chunk)
+
+
 # ---------- P35 换号重试的三个小工具 ----------
 def _is_retryable(reason: str) -> bool:
     from .scheduler import is_retryable
@@ -722,6 +728,8 @@ async def chat_completions(request: Request) -> Any:
                     produced = False
                     completed = False
                     finish_seen = False   # R2.40：收到非空 finish_reason = 内容已完整
+                    # R2.48：断流诊断——只记录最后几帧的类型，绝不参与成功/失败判定。
+                    frame_diag: list[str] = []
                     try:
                         async for chunk in _stream_upstream(payload, cand):
                             if await request.is_disconnected():
@@ -741,6 +749,10 @@ async def chat_completions(request: Request) -> Any:
                             # 只差收尾帧 —— 不能当成失败弹错误给用户。
                             if chunk_has_finish_reason(chunk):
                                 finish_seen = True
+                            # R2.48：只观测。保留最后 4 帧压缩标签 + 首帧，断流时落日志定位断点。
+                            frame_diag.append(chunk_diag_label(chunk))
+                            if len(frame_diag) > 6:
+                                frame_diag.pop(0)
                             produced = True
                             last_event_at = time.monotonic()
                             yield chunk
@@ -750,6 +762,20 @@ async def chat_completions(request: Request) -> Any:
                     except _upstream_error_types() as e:
                         last_error = e.reason
                         ended_at = time.monotonic()
+                        # R2.48：断流诊断（只记录，不改判据/行为）。落库供事后查断点：
+                        # 断在正文帧 / finish_reason / usage / [DONE] 哪一环，一眼可见。
+                        try:
+                            store.log_schedule(
+                                "stream_diag",
+                                f"{cand.account_label}/{cand.model_name} "
+                                f"frames={len(frame_diag)} finish={finish_seen} "
+                                f"usage={actual_credit is not None} ptok={real_prompt_tokens is not None} "
+                                f"tail={'|'.join(frame_diag[-4:]) or '(none)'} "
+                                f"err={e.reason[:60]}",
+                                "warn",
+                            )
+                        except Exception:
+                            pass
                         # R2.40：内容已完整吐出后、收尾帧前断流 → 静默补 [DONE] 收尾。
                         # 上游偶发在发完内容+finish_reason 后 TCP reset（差 usage/[DONE]），
                         # 此时客户端已看到完整回答，再吐 error 帧会让它误报「出现错误」。

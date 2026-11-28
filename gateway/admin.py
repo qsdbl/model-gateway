@@ -481,13 +481,16 @@ def _accounts_rich() -> list[dict]:
             it["credential"] = {}
         return items
 
-    # 当前账号：显式选择优先；没选就是余额最多的那个（和调度一致）
-    if active and any(r["label"] == active for r in rows):
+    # 当前账号：**只认手动锁**。
+    #
+    # R2.44 删掉了「没锁就标余额最多的那个为 active」的兜底：前端把这个字段当
+    # 「已锁定到 X」用（锁定卡 + ✓ + 隐藏「锁定此账号」按钮），而它以前在没有
+    # 任何锁的时候也会亮一个（余额最高的那个号）。用户点「恢复自动调度」后
+    # 页面立刻冒出「已锁定到 134****7191」——134 就是当时余额最高的号，
+    # 纯属兜底兜出来的幽灵锁定。没有锁就一个都不亮。
+    if active:
         for r in rows:
             r["active"] = r["label"] == active
-    elif rows:
-        best = max(rows, key=lambda r: r["balance"] if r["balance"] is not None else -1)
-        best["active"] = True
     rows.sort(key=lambda r: r["balance"] if r["balance"] is not None else -1, reverse=True)
     # R1.9：每个账号挂一个 in_routing，前端据此标注「余额为 0 · 不参与调度」，
     # 与平台汇总的 routing 计数、真实候选池三处口径一致。

@@ -118,6 +118,11 @@ def chunk_diag_label(chunk: str) -> str:
     from .credit import chunk_diag_label as _impl
     return _impl(chunk)
 
+def chunk_content_len(chunk: str) -> int:
+    """R2.51：这一帧真正的 delta.content 字符数（只观测，不参与判据）。"""
+    from .credit import chunk_content_len as _impl
+    return _impl(chunk)
+
 
 # ---------- P35 换号重试的三个小工具 ----------
 def _is_retryable(reason: str) -> bool:
@@ -736,8 +741,13 @@ async def chat_completions(request: Request) -> Any:
                     produced = False
                     completed = False
                     finish_seen = False   # R2.40：收到非空 finish_reason = 内容已完整
-                    # R2.48：断流诊断——只记录最后几帧的类型，绝不参与成功/失败判定。
-                    frame_diag: list[str] = []
+                    # R2.48/51：断流诊断——只记录帧统计，绝不参与成功/失败判定。
+                    frame_diag: list[str] = []       # 最后 6 帧标签
+                    frame_idx = 0                     # 总帧序号
+                    content_chars = 0                 # 全程累计 delta.content 字符数
+                    content_frames = 0                # 带实质 content 的帧数
+                    last_content_idx = -1             # 最后一个 content 帧的序号
+                    first_label = ""                  # 首帧标签
                     try:
                         async for chunk in _stream_upstream(payload, cand):
                             if await request.is_disconnected():
@@ -757,10 +767,19 @@ async def chat_completions(request: Request) -> Any:
                             # 只差收尾帧 —— 不能当成失败弹错误给用户。
                             if chunk_has_finish_reason(chunk):
                                 finish_seen = True
-                            # R2.48：只观测。保留最后 4 帧压缩标签 + 首帧，断流时落日志定位断点。
-                            frame_diag.append(chunk_diag_label(chunk))
+                            # R2.48/51：只观测。维护滑动窗口 + 全程 content 统计，断流时落日志定位断点。
+                            _lbl = chunk_diag_label(chunk)
+                            frame_diag.append(_lbl)
                             if len(frame_diag) > 6:
                                 frame_diag.pop(0)
+                            if not first_label:
+                                first_label = _lbl
+                            _clen = chunk_content_len(chunk)
+                            if _clen:
+                                content_chars += _clen
+                                content_frames += 1
+                                last_content_idx = frame_idx
+                            frame_idx += 1
                             produced = True
                             last_event_at = time.monotonic()
                             yield chunk
@@ -770,15 +789,19 @@ async def chat_completions(request: Request) -> Any:
                     except _upstream_error_types() as e:
                         last_error = e.reason
                         ended_at = time.monotonic()
-                        # R2.48：断流诊断（只记录，不改判据/行为）。落库供事后查断点：
-                        # 断在正文帧 / finish_reason / usage / [DONE] 哪一环，一眼可见。
+                        # R2.48/51：断流诊断（只记录，不改判据/行为）。落库供事后查断点：
+                        # 关键看 content_chars/content_frames + last_content_idx vs total_frames
+                        # ——若 content 早已吐完、断流发生在一串空壳帧期间，就是「内容完整但没 stop」。
                         try:
                             store.log_schedule(
                                 "stream_diag",
                                 f"{cand.account_label}/{cand.model_name} "
-                                f"frames={len(frame_diag)} finish={finish_seen} "
+                                f"total={frame_idx} finish={finish_seen} "
                                 f"usage={actual_credit is not None} ptok={real_prompt_tokens is not None} "
-                                f"tail={'|'.join(frame_diag[-4:]) or '(none)'} "
+                                f"content_chars={content_chars} content_frames={content_frames} "
+                                f"last_content_idx={last_content_idx} "
+                                f"first={first_label or '(none)'} "
+                                f"tail={'|'.join(frame_diag) or '(none)'} "
                                 f"err={e.reason[:60]}",
                                 "warn",
                             )

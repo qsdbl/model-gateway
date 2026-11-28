@@ -176,3 +176,35 @@ def chunk_diag_label(chunk: str) -> str:
     elif '"finish_reason"' in body:
         parts.append("finish=empty")
     return "+".join(parts) if parts else "frame"
+
+
+def chunk_content_len(chunk: str) -> int:
+    """这一帧真正的 `delta.content` 字符数（R2.51 诊断，只观测）。
+
+    刻意不计 reasoning_content：上游在正文吐完后会发大量 `content:""` 但
+    `reasoning_content` 有值的空壳帧，诊断要区分「正文是否已吐完」不能算它们。
+    仅用于日志定位断点，绝不参与成功/失败判定。
+    """
+    text = chunk.strip()
+    if not text.startswith("data:") or "[DONE]" in text:
+        return 0
+    body = text[5:].strip()
+    try:
+        obj = json.loads(body)
+    except Exception:  # noqa: BLE001
+        return 0
+    if not isinstance(obj, dict):
+        return 0
+    choices = obj.get("choices")
+    if not isinstance(choices, list):
+        return 0
+    total = 0
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta") or choice.get("message") or {}
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                total += len(content)
+    return total

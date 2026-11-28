@@ -68,6 +68,45 @@ def _save_snapshot(resp_id: str, output: list[dict[str, Any]], model: str) -> No
             _RESPONSES.pop(key, None)
 
 
+def _normalize_content_part(part: Any) -> Any:
+    """Responses content part → Chat Completions content part（P14）。
+
+    WorkBuddy 上游只认 text/image_url；Codex 会话里的类型名不同，做协议级映射：
+    - input_text / output_text → text（P11/P12 已有行为，正文原样保留）
+    - input_image → image_url 对象：Codex 的 image_url 是**字符串**
+      （data:image/...），detail 是并列字段；上游要求
+      {"type":"image_url","image_url":{"url":<str>,"detail":<str>}}。
+      已是 image_url 对象的幂等放行（不改 url/detail）。
+    - 其它类型原样返回，不放宽 context.py 白名单——未知类型交给校验器拒绝，
+      绝不静默丢图片，也不在这里偷偷放过。
+    """
+    if not isinstance(part, dict):
+        return part
+    ptype = part.get("type")
+    if ptype in ("input_text", "output_text"):
+        p = dict(part)
+        p["type"] = "text"
+        return p
+    if ptype == "input_image":
+        iu = part.get("image_url")
+        # image_url 是字符串（Codex 实际形态）→ 包成上游要的对象；
+        # 已经是对象则原样幂等，不破坏已合规的 image_url part。
+        if isinstance(iu, str):
+            obj: dict[str, Any] = {"url": iu}
+            if "detail" in part:
+                obj["detail"] = part["detail"]
+            return {"type": "image_url", "image_url": obj}
+        return part  # 对象/其它：不猜、不改，交给 context.py 校验
+    return part
+
+
+def _normalize_content(content: Any) -> Any:
+    """content 列表逐 part 归一；字符串与其它形态原样返回。"""
+    if isinstance(content, list):
+        return [_normalize_content_part(p) for p in content]
+    return content
+
+
 def _item_to_message(item: Any, default_role: str = "assistant") -> dict[str, Any] | None:
     """Responses item → 内部 chat message，原样保留工具骨架（P8 修复 BUG-3）。
 
@@ -93,29 +132,17 @@ def _item_to_message(item: Any, default_role: str = "assistant") -> dict[str, An
                 },
             }],
         }
-    # 工具结果：保留 call_id 关联
+    # 工具结果：保留 call_id 关联（P14：output 里的 input_image 同样要归一）
     if item_type == "function_call_output":
         return {
             "role": "tool",
             "tool_call_id": item.get("call_id", ""),
-            "content": item.get("output", ""),
+            "content": _normalize_content(item.get("output", "")),
         }
     if item_type == "message" or item_type is None:
-        content = item.get("content")
-        # P11 实测：Codex Responses 用 input_text content part；P12 实测：工具回合
-        # 续接时我们自己保存的 output 用 output_text。WorkBuddy 上游只接受
-        # text/image_url（400 code=11101 unsupported content type）。
-        # 这里做协议级类型映射：两种文本都映射为 text，正文原样保留、不裁剪。
-        if isinstance(content, list):
-            normalized = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") in ("input_text", "output_text"):
-                    p = dict(part)
-                    p["type"] = "text"
-                    normalized.append(p)
-                else:
-                    normalized.append(part)
-            content = normalized
+        content = _normalize_content(item.get("content"))
+        # P11/P12/P14：input_text/output_text → text、input_image → image_url，
+        # 由 _normalize_content_part 统一处理（两个分支共用，避免逻辑不一致）。
         # P13 修复：新版 Codex（App 内置 0.167）把 system 指令放在 developer
         # 角色里；Chat Completions 上游只接受 system/user/assistant/tool。
         # 这是协议角色适配（与 input_text→text 同类），正文原样保留、不裁剪，

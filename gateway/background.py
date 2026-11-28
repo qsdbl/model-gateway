@@ -244,8 +244,12 @@ def _notify_renew_failures() -> None:
     if not alerts:
         return
     rows = []
+    # R2.48：账号名必须过 display_label 掩码——底层 label 可能是内部昵称
+    # （如历史遗留的「主号」），直接塞进邮件会把内部称呼裸露给用户。
+    # 用户已多次指出：登录的是多个平等账号，不存在「主号」，一律掩码显示。
+    from .display import display_label
     for s in sorted(alerts, key=lambda x: -x.get("fail_streak", 0)):
-        label, plat = s["account_label"], s["platform"]
+        label, plat = display_label(s["account_label"]), s["platform"]
         streak = s["fail_streak"]
         last = datetime.datetime.fromtimestamp(s["last_fail_at"]).strftime("%m-%d %H:%M") \
             if s.get("last_fail_at") else "-"
